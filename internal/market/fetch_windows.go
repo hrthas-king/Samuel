@@ -198,6 +198,9 @@ func enrichCapitalizationLocked(ctx context.Context, batch map[string]SymbolResu
 }
 
 func fetchSymbolsLocked(ctx context.Context, syms []string) (map[string]SymbolResult, error) {
+	if usCashIndexSymbols(syms) {
+		return fetchUSCashRealtimeLocked(ctx, syms)
+	}
 	indices := len(syms) > 0
 	for _, symbol := range syms {
 		indices = indices && isGlobalIndex(symbol)
@@ -206,6 +209,27 @@ func fetchSymbolsLocked(ctx context.Context, syms []string) (map[string]SymbolRe
 		return fetchIndexQuotes(ctx, syms, fetchTradingViewIndicesLocked, fetchStandardSymbolsLocked)
 	}
 	return fetchStandardSymbolsLocked(ctx, syms)
+}
+
+func fetchUSCashRealtimeLocked(ctx context.Context, syms []string) (map[string]SymbolResult, error) {
+	session, err := ensureSessionLocked()
+	if err != nil {
+		return nil, err
+	}
+	var wire []string
+	for _, symbol := range syms {
+		wire = append(wire, usCashTickers[symbol])
+	}
+	path := "/quote-html-webservice/quote.htm?symbols=" + url.QueryEscape(strings.Join(wire, "|")) + "&requestMethod=quick&noform=1&fund=0&exthrs=0&output=json"
+	start := time.Now()
+	status, body, err := doHTTPGet(ctx, session, "quote.cnbc.com", path, false)
+	if err != nil {
+		return nil, fmt.Errorf("实时指数读取失败: %w", err)
+	}
+	if status != 200 {
+		return nil, HTTPError{StatusCode: status}
+	}
+	return parseCNBCIndexBatch(syms, body, float64(time.Since(start).Microseconds())/1000, time.Now())
 }
 
 func fetchTradingViewIndicesLocked(ctx context.Context, syms []string) (map[string]SymbolResult, error) {

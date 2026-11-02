@@ -96,7 +96,9 @@ Samuel 原名 PulseBar，将网络感知与双标的行情显示组合在一条�
 | 美股指数 | 纳斯达克100 / 标普500（^NDX / ^GSPC，指数本身） |
 | 沪深指数 | 上证 / 深证成指（000001 / 399001），原有创业板组合保留 |
 
-新增美股指数使用 NASDAQ:NDX / SP:SPX 行情，当前公开源分别声明约 15 / 10 分钟延迟，界面保留延迟提示；它们与 VOO / QQQ ETF 分开列出。个股显示美元市值，指数显示估值，基金与 ETF 不增加这些字段。
+美股指数使用 CNBC 的 `.NDX / .SPX` 交易所指数报价，要求来源明确声明实时，替换原来固定 15 / 10 分钟延迟的 TradingView 源。失败时保留异常提示，不静默回退到分钟延迟数据。刷新按菜单所选的 1 / 2 / 5 秒轮询，仍有正常的网络及行情发布耗时，不能据此保证物理上的零延迟。
+
+纳指100、标普500按纽约现金市场时段显示：未开盘或休市时保留最近收盘值，日期会在悬停中列出；这两个指数与盘前/夜盘的期货、CFD不同。程序不把响应时间或缓存时间当作报价时间，盘中须有可核实的当日行情时间，超过90秒的报价会报异常。纽约时区规则内置，支持夏令时。个股显示美元市值，指数显示估值，基金与 ETF 不增加这些字段。
 
 “美股市值前二”是按菜单注明日期核对的固定组合，依据 [Stock Analysis](https://stockanalysis.com/list/largest-us-companies/) 与 [CompaniesMarketCap](https://companiesmarketcap.com/usa/largest-companies-in-the-usa-by-market-cap/) 的公司市值榜单配置；行情持续刷新，市值排名变化时需重新核对组合。
 
@@ -114,11 +116,11 @@ Samuel 原名 PulseBar，将网络感知与双标的行情显示组合在一条�
 
 国内标的输入六位数字，程序按 `5/6` 沪市、`0/1/3` 深市、`4/8/92` 北交所匹配后联网校验；美股输入字母代码，大小写自动统一，`BRK.B` 与 `BRK-B` 按同一代码处理。已保存组合列在 **其他** 子菜单中，可直接切换，也可使用旁侧删除按钮；删除当前组合后回到默认组。点击面板外、按 **Esc** 或点击 **取消** 可关闭输入面板。
 
-**行情时效：**国内股票及场内 ETF 使用腾讯财经；美股使用 Yahoo Finance；欧洲与日韩指数优先使用 TradingView，部分内置市场在主数据源不可用时可使用备用来源。实际可用性、行情权限、交易时段和延迟由数据源、交易所及网络环境共同决定；轮询频率不保证逐笔成交或零延迟。悬停提示和诊断信息可查看来源与行情时间。本工具用于信息展示，不执行交易。
+**行情时效：**国内股票及场内 ETF 使用腾讯财经；美股股票和 ETF 使用 Yahoo Finance；纳指100 / 标普500使用 CNBC 的实时标记指数源；欧洲与日韩指数优先使用 TradingView。其他部分市场在主数据源不可用时可使用备用来源。实际可用性、行情权限、交易时段和延迟由数据源、交易所及网络环境共同决定；轮询频率不保证逐笔成交或零延迟。悬停提示和诊断信息可查看来源与行情时间。本工具用于信息展示，不执行交易。
 
 ## 设置与隐私
 
-设置与自定义组合保存在本机 JSON，包含界面位置、大小、刷新间隔和行情选择。开机自启由当前用户的 Windows 设置管理。公网出口查询与 HTTPS 延迟测量使用 Cloudflare，行情查询使用腾讯财经、Yahoo Finance 或 TradingView，已接入的指数估值历史读取股叉叉公开接口；各服务可见正常请求所需的网络信息。配置文件不保存公网 IP 或历史流量。
+设置与自定义组合保存在本机 JSON，包含界面位置、大小、刷新间隔和行情选择。开机自启由当前用户的 Windows 设置管理。公网出口查询与 HTTPS 延迟测量使用 Cloudflare，行情查询使用腾讯财经、Yahoo Finance、TradingView 或 CNBC，已接入的指数估值历史读取股叉叉公开接口；各服务可见正常请求所需的网络信息。配置文件不保存公网 IP 或历史流量。
 
 从 PulseBar 升级时，Samuel 默认继续使用原来的 `%LOCALAPPDATA%\PulseBar\config.json`，因此可以读取已有设置和组合。可通过 `SAMUEL_CONFIG` 环境变量指定配置文件；旧变量 `PULSEBAR_CONFIG` 也兼容，二者同时设置时以前者为准。
 
@@ -132,13 +134,13 @@ Samuel 原名 PulseBar，将网络感知与双标的行情显示组合在一条�
 git clone https://github.com/hrthas-king/Samuel.git
 cd Samuel
 ./scripts/verify.ps1
-./scripts/build.ps1 -Arch amd64 -Version v1.0.8
+./scripts/build.ps1 -Arch amd64 -Version v1.0.9
 ```
 
 构建脚本输出 `dist/Samuel-windows-amd64.exe`；ARM 设备可将 `-Arch amd64` 改为 `-Arch arm64`。`verify.ps1` 包含自动测试、静态检查、格式检查与双架构构建。也可以创建包含文档的发布压缩包：
 
 ```powershell
-./scripts/package.ps1 -Version v1.0.8
+./scripts/package.ps1 -Version v1.0.9
 ```
 
 常用命令（在可执行文件所在目录运行）：

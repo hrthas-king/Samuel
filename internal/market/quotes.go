@@ -256,6 +256,7 @@ type Quote struct {
 	DelaySeconds   int             `json:"delay_seconds,omitempty"`
 	Capitalization *Capitalization `json:"capitalization,omitempty"`
 	Valuation      *IndexValuation `json:"valuation,omitempty"`
+	QuoteDate      string          `json:"quote_date,omitempty"`
 }
 
 func (q Quote) Previous() float64 {
@@ -1343,6 +1344,9 @@ func (v View) Tooltip() string {
 		tradeInfo := ""
 		if isGlobalIndex(v.Symbol) && v.Quote.TradeTime == 0 {
 			tradeInfo = "；源未提供逐笔时间（轮询时间不代表行情时间）"
+			if v.Quote.QuoteDate != "" {
+				tradeInfo = "；源报价日期 " + v.Quote.QuoteDate + "（纽约时间，仅日期，无逐笔时间）"
+			}
 		}
 		if v.Quote.TradeTime > 0 {
 			tradeAge := time.Now().Unix() - v.Quote.TradeTime

@@ -1,6 +1,25 @@
 # 验证记录 (Validation)
 
-## v1.0.8：新增指数行情与 PE / PB / 历史分位（最新）
+## v1.0.9：纳指100 / 标普500实时标记源（最新）
+
+验证日期：**2026-11-02 美东时间**。
+
+- 旧版实连基线确认纳指100 / 标普500分别走 `delayed_streaming_900 / delayed_streaming_600`。同一诊断脚本检查新程序后，两者均为 `CNBC / cnbc_realtime`、`INDEX / USD`，不再路由到原固定15 / 10分钟延迟源，也不在失败时静默回退。
+- CNBC `.NDX / .SPX` 响应明确包含 `source=Exchange` 与 `realTime=true`。Yahoo 虽返回 `exchangeDataDelayedBy=0`，但来源名为 `Delayed Quote`，未将该冲突数据作为实时依据。此次变更依据实际返回的身份、实时标记、价格及时间字段，不是仅删除界面延迟文字。[CNBC公开报价接口](https://quote.cnbc.com/quote-html-webservice/quote.htm?symbols=.NDX%7C.SPX&requestMethod=quick&noform=1&output=json)可核查响应字段。
+- 本轮实连发生在纽约盘前，源只提供上一交易日 2026-10-30 的 `last_time` 日期；真实逐笔时间保持为空，不将不断变化的 `last_time_msec / responseTime / cachedTime` 写成新成交时间。源的实时声明不等于已测得端到端零延迟，**本轮尚未实测盘中逐秒更新时效**。
+- 盘中只接受可核实的当日指数时间，过旧（超过90秒）、缺失或未来时间被拒绝；日期型主字段仅在常规时段可用同日有效 `reg_last_time` 补全，不覆盖已有的旧逐笔时间。夏令时/冬令时、日期型收盘报价、响应时间混淆、错误品类/币种/来源、非实时标记与单侧失败均有回归。
+- `America/New_York` 的1744字节 TZif 数据取自 Go 自带 IANA 时区库并内嵌，独立 Windows 程序无需外部时区文件。默认自动测试 **99 项**（含子项共 **223 项**）、静态检查、格式检查和 Windows amd64 / arm64 构建通过；三个既有联网/交互/外部资源测试默认跳过，ARM64 尚未真机运行。
+- 15秒无窗口诊断和20秒完整 GUI 实连均通过，两只指数报价健康、源身份正确、估值行可用；本机已更新至 v1.0.9，实际用户配置内容与更新前一致。首次与新版使用同一回归条件，旧版失败、新版通过。证据位于忽略目录 `.artifacts/us-index-realtime/`。
+- 附带观察：本轮估值上游仅返回53个周样本，实际历史为 2025-10-31 至 2026-10-30；程序仍按该真实区间计算并显示日期/样本数，没有补造十年数据。不同窗口的百分位不能直接与 v1.0.8 记录中的十年结果比较。
+
+本轮本机产物 SHA-256（GitHub Actions 工具链不同，可能产生不同哈希）：
+
+```text
+ECC7F5ACD6AB0F007D262AF21712DC7650F9170EE887A8F31C293A30AB48CE1B  Samuel.exe / dist/Samuel-windows-amd64.exe
+096D69772EA4DC411F8C7CEA7C8928B4D5B38681DD1F534EE0D8C7A40303831A  dist/Samuel-windows-arm64.exe
+```
+
+## v1.0.8：新增指数行情与 PE / PB / 历史分位（历史）
 
 验证日期：**2026-11-02 美东时间**。
 
