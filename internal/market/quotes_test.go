@@ -31,10 +31,10 @@ func TestParseYahooQuoteBatchAllSessions(t *testing.T) {
 	if voo == nil || qqq == nil {
 		t.Fatalf("expected both VOO and QQQ quotes: %+v", batch)
 	}
-	if voo.Price != 699.05 || math.Abs(voo.ChangePercent-0.06728) > 1e-4 || voo.State != StateOvernight || voo.Alias != "VOO" || voo.QuoteSource != "BOATS Real Time Price" {
+	if voo.Price != 698.58 || math.Abs(voo.ChangePercent-(-0.53)) > 1e-4 || voo.State != StateOvernight || voo.Alias != "VOO" || voo.UpdateMode != "yahoo_regular" {
 		t.Fatalf("unexpected VOO overnight quote: %+v", voo)
 	}
-	if qqq.Price != 703.55 || math.Abs(qqq.ChangePercent - -0.12067) > 1e-4 || qqq.State != StateOvernight || qqq.Alias != "QQQ" {
+	if qqq.Price != 704.40 || math.Abs(qqq.ChangePercent - -0.01) > 1e-4 || qqq.State != StateOvernight || qqq.Alias != "QQQ" {
 		t.Fatalf("unexpected QQQ overnight quote: %+v", qqq)
 	}
 }
@@ -180,7 +180,7 @@ func TestParseYahooChartAndSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected VOO parse error: %v", err)
 	}
-	if qVOO.Price != 699.16 || math.Abs(qVOO.ChangeAbs-0.58) > 1e-4 || qVOO.State != StateOvernight || qVOO.Session != "夜盘 (Overnight)" {
+	if qVOO.Price != 698.58 || math.Abs(qVOO.ChangeAbs-(-3.72)) > 1e-4 || qVOO.State != StateOvernight || qVOO.UpdateMode != "yahoo_regular" {
 		t.Fatalf("unexpected VOO quote: %+v", qVOO)
 	}
 
@@ -189,7 +189,7 @@ func TestParseYahooChartAndSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected QQQ parse error: %v", err)
 	}
-	if qQQQ.Price != 703.68 || math.Abs(qQQQ.ChangeAbs - -0.72) > 1e-4 || qQQQ.State != StatePreMarket || qQQQ.Session != "盘前 (Pre-Market)" {
+	if qQQQ.Price != 704.40 || math.Abs(qQQQ.ChangeAbs - -0.07) > 1e-4 || qQQQ.State != StatePreMarket || qQQQ.UpdateMode != "yahoo_regular" {
 		t.Fatalf("unexpected QQQ quote: %+v", qQQQ)
 	}
 

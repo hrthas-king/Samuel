@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestCompanyCapitalizationPreservesMultiClassTotalAndRepricesExtendedHours(t *testing.T) {
+func TestCompanyCapitalizationPreservesMultiClassTotalWithRegularHeadline(t *testing.T) {
 	now := time.Date(2026, 10, 29, 21, 0, 0, 0, time.UTC)
 	for _, state := range []string{"REGULAR", "POST"} {
 		t.Run(state, func(t *testing.T) {
@@ -20,10 +20,7 @@ func TestCompanyCapitalizationPreservesMultiClassTotalAndRepricesExtendedHours(t
 			}
 			q := batch["GOOGL"].Quote
 			want := 3e12
-			if state == "POST" {
-				want = 3.3e12
-			}
-			if q.Capitalization == nil || math.Abs(q.Capitalization.USD-want) > 1 || q.Capitalization.Estimated != (state == "POST") {
+			if q.Price != 100 || q.Capitalization == nil || math.Abs(q.Capitalization.USD-want) > 1 || q.Capitalization.Estimated {
 				t.Fatalf("company-wide market cap replaced by one share class or not repriced: %#v", q.Capitalization)
 			}
 		})

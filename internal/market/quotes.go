@@ -77,8 +77,8 @@ var Groups = []GroupSpec{
 	{ID: GroupGoldOil, MenuLabel: "黄金 / 布伦特原油 (GC / BZ)", Symbols: []string{"GC=F", "BZ=F"}},
 	{ID: GroupCNIndices, MenuLabel: "A股指数 (上证 / 创指)", Symbols: []string{"000001.SS", "399006.SZ"}},
 	{ID: GroupHKIndices, MenuLabel: "港股指数 (恒指 / 恒科)", Symbols: []string{"^HSI", "^HSTECH"}},
-	{ID: GroupAsiaIndices, MenuLabel: "日韩指数 (TradingView · 日经参考 / 韩国综合)", Symbols: []string{"^N225", "^KS11"}},
-	{ID: GroupEUIndices, MenuLabel: "欧洲参考指数 (TradingView · CAC / DAX)", Symbols: []string{"^FCHI", "^GDAXI"}},
+	{ID: GroupAsiaIndices, MenuLabel: "日韩指数 (腾讯 · 日经225 / 韩国综合)", Symbols: []string{"^N225", "^KS11"}},
+	{ID: GroupEUIndices, MenuLabel: "欧洲指数 (Yahoo · 法国CAC40 / 德国DAX)", Symbols: []string{"^FCHI", "^GDAXI"}},
 	{ID: GroupETF159632159655, MenuLabel: "华安纳指ETF / 华夏标普500ETF", Symbols: []string{"159632.SZ", "159655.SZ"}},
 	{ID: GroupUSIndices, MenuLabel: "美股指数 (纳斯达克100 / 标普500)", Symbols: []string{"^NDX", "^GSPC"}},
 	{ID: GroupCNComposite, MenuLabel: "沪深指数 (上证 / 深证成指)", Symbols: []string{"000001.SS", "399001.SZ"}},
@@ -257,9 +257,14 @@ type Quote struct {
 	Capitalization *Capitalization `json:"capitalization,omitempty"`
 	Valuation      *IndexValuation `json:"valuation,omitempty"`
 	QuoteDate      string          `json:"quote_date,omitempty"`
+	ChangeBase     float64         `json:"change_base_price,omitempty"`
+	ChangeBasis    string          `json:"change_basis,omitempty"`
 }
 
 func (q Quote) Previous() float64 {
+	if positiveFinite(q.ChangeBase) {
+		return q.ChangeBase
+	}
 	return q.Price - q.ChangeAbs
 }
 
@@ -293,6 +298,9 @@ func ValidateQuote(q Quote) error {
 		}
 	}
 	prev := q.Previous()
+	if q.ChangeBase != 0 && (!positiveFinite(q.ChangeBase) || !isClose(q.Price-q.ChangeBase, q.ChangeAbs, 1e-5, .02)) {
+		return fmt.Errorf("现价、涨跌额与来源基准价不一致")
+	}
 	if math.IsNaN(prev) || math.IsInf(prev, 0) || q.Price <= 0 || prev <= 0 || q.RTTMs < 0 {
 		return fmt.Errorf("价格、基准或请求耗时无效")
 	}
@@ -353,46 +361,6 @@ type yahooQuoteItem struct {
 	FulldayChange                *float64        `json:"fulldayChange"`
 	FulldayChangePercent         *float64        `json:"fulldayChangePercent"`
 	MarketCap                    json.RawMessage `json:"marketCap"`
-}
-
-type sessionCandidate struct {
-	price     float64
-	changeAbs float64
-	changePct float64
-	tradeTime int64
-	state     SessionState
-	session   string
-	mode      string
-	valid     bool
-}
-
-func makeCandidate(price, chg, pct *float64, ts *int64, state SessionState, session, mode string) sessionCandidate {
-	if price == nil || chg == nil || pct == nil || *price <= 0 {
-		return sessionCandidate{}
-	}
-	var t int64
-	if ts != nil {
-		t = *ts
-	}
-	p := *price
-	c := *chg
-	cp := *pct
-	if prev := p - c; prev > 0 {
-		calc := c / prev * 100.0
-		if !math.IsNaN(calc) && !math.IsInf(calc, 0) && !isClose(calc, cp, 1e-5, 0.05) && math.Abs(calc-cp) < 0.35 {
-			cp = calc
-		}
-	}
-	return sessionCandidate{
-		price:     p,
-		changeAbs: c,
-		changePct: cp,
-		tradeTime: t,
-		state:     state,
-		session:   session,
-		mode:      mode,
-		valid:     true,
-	}
 }
 
 // ResolveSessionState 根据 Yahoo API 返回的 marketState、资产类型与交易所本地时钟判定五态时段状态。
@@ -819,6 +787,8 @@ func ParseTencentQuoteBatch(expectedSymbols []string, body []byte, rttMs float64
 				ChangePercent: changePct,
 				ChangeAbs:     changeAbs,
 				RegularPrice:  prevClose,
+				ChangeBase:    prevClose,
+				ChangeBasis:   "腾讯期货价格基准",
 				Currency:      "USD",
 				QuoteType:     "FUTURE",
 				MarketState:   "REGULAR",
@@ -883,22 +853,25 @@ func ParseTencentQuoteBatch(expectedSymbols []string, body []byte, rttMs float64
 			}
 
 			q := Quote{
-				Symbol:        sym,
-				Alias:         AliasFor(sym),
-				Price:         price,
-				ChangePercent: changePct,
-				ChangeAbs:     changeAbs,
-				RegularPrice:  prevClose,
-				Currency:      cur,
-				QuoteType:     "INDEX",
-				MarketState:   "REGULAR",
-				State:         state,
-				TradeTime:     tradeTime,
-				QuoteSource:   "Tencent Finance（备用指数）",
-				UpdateMode:    "global_index_quote",
-				Session:       session,
-				Description:   desc,
-				RTTMs:         rttMs,
+				Symbol:         sym,
+				Alias:          AliasFor(sym),
+				Price:          price,
+				ChangePercent:  changePct,
+				ChangeAbs:      changeAbs,
+				RegularPrice:   prevClose,
+				ChangeBase:     prevClose,
+				ChangeBasis:    "腾讯涨跌额对应基准",
+				Currency:       cur,
+				QuoteType:      "INDEX",
+				MarketState:    "REGULAR",
+				State:          state,
+				TradeTime:      tradeTime,
+				QuoteSource:    "Tencent Finance",
+				ProviderSymbol: "Tencent:" + tencentSymbolMap[sym],
+				UpdateMode:     "global_index_quote",
+				Session:        session,
+				Description:    desc,
+				RTTMs:          rttMs,
 			}
 			if err := ValidateQuote(q); err != nil {
 				out[sym] = SymbolResult{Err: err.Error()}
@@ -965,6 +938,8 @@ func ParseTencentQuoteBatch(expectedSymbols []string, body []byte, rttMs float64
 				ChangePercent: changePct,
 				ChangeAbs:     changeAbs,
 				RegularPrice:  prevClose,
+				ChangeBase:    prevClose,
+				ChangeBasis:   "腾讯前收",
 				Currency:      cur,
 				QuoteType:     quoteType,
 				MarketState:   marketState,
@@ -1082,80 +1057,92 @@ func parseYahooQuoteItem(item yahooQuoteItem, rttMs float64, now time.Time) (Quo
 		regPrice = *item.RegularMarketPrice
 	}
 
-	reg := makeCandidate(item.RegularMarketPrice, item.RegularMarketChange, item.RegularMarketChangePercent, item.RegularMarketTime, StateRegular, "盘中 (Regular)", "regular_realtime")
-	post := makeCandidate(item.PostMarketPrice, item.PostMarketChange, item.PostMarketChangePercent, item.PostMarketTime, StatePostMarket, "盘后 (Post-Market)", "post_market_realtime")
-	ovn := makeCandidate(item.OvernightMarketPrice, item.OvernightMarketChange, item.OvernightMarketChangePercent, item.OvernightMarketTime, StateOvernight, "夜盘 (Overnight BOATS)", "overnight_boats_realtime")
-	pre := makeCandidate(item.PreMarketPrice, item.PreMarketChange, item.PreMarketChangePercent, item.PreMarketTime, StatePreMarket, "盘前 (Pre-Market)", "pre_market_realtime")
-
+	change, percent, base, err := yahooRegularChanges(regPrice, item.RegularMarketPreviousClose, item.RegularMarketChange, item.RegularMarketChangePercent)
+	if err != nil {
+		return Quote{}, err
+	}
 	rawState := strings.ToUpper(strings.TrimSpace(item.MarketState))
-	var chosen sessionCandidate
-
-	if rawState == "REGULAR" && reg.valid {
-		chosen = reg
-	} else {
-		for _, c := range []sessionCandidate{ovn, pre, post, reg} {
-			if !c.valid {
-				continue
-			}
-			if !chosen.valid || (c.tradeTime > 0 && c.tradeTime > chosen.tradeTime) {
-				chosen = c
-			}
-		}
-		if chosen.tradeTime == 0 {
-			switch {
-			case rawState == "OVERNIGHT" && ovn.valid:
-				chosen = ovn
-			case strings.HasPrefix(rawState, "PRE") && pre.valid:
-				chosen = pre
-			case strings.HasPrefix(rawState, "POST") && post.valid:
-				chosen = post
-			case reg.valid:
-				chosen = reg
-			}
-		}
-	}
-
-	if !chosen.valid {
-		return Quote{}, fmt.Errorf("缺少有效价格字段")
-	}
 
 	gmtSec := item.GMTOffsetMilliseconds / 1000
 	resolvedState, resolvedLabel := ResolveSessionStateForType(item.MarketState, qt, now, gmtSec)
-	if strings.TrimSpace(item.MarketState) == "" && chosen.state != "" {
-		resolvedState = chosen.state
-		resolvedLabel = chosen.session
-	} else if resolvedState == StateOvernight && chosen.mode == "overnight_boats_realtime" {
-		resolvedLabel = "夜盘 (Overnight BOATS)"
-	}
+	resolvedLabel += "；显示Yahoo常规主报价"
 
 	src := strings.TrimSpace(item.QuoteSourceName)
 	if src == "" {
 		src = "Yahoo Finance"
+	} else {
+		src = "Yahoo Finance（" + src + "）"
 	}
 
 	q := Quote{
-		Symbol:        item.Symbol,
-		Alias:         quoteAlias(item.Symbol, desc),
-		Price:         chosen.price,
-		ChangePercent: chosen.changePct,
-		ChangeAbs:     chosen.changeAbs,
-		RegularPrice:  regPrice,
-		Currency:      cur,
-		QuoteType:     qt,
-		MarketState:   rawState,
-		State:         resolvedState,
-		TradeTime:     chosen.tradeTime,
-		QuoteSource:   src,
-		UpdateMode:    chosen.mode,
-		Session:       resolvedLabel,
-		Description:   desc,
-		RTTMs:         rttMs,
+		Symbol:         item.Symbol,
+		Alias:          quoteAlias(item.Symbol, desc),
+		Price:          regPrice,
+		ChangePercent:  percent,
+		ChangeAbs:      change,
+		RegularPrice:   regPrice,
+		Currency:       cur,
+		QuoteType:      qt,
+		MarketState:    rawState,
+		State:          resolvedState,
+		TradeTime:      0,
+		QuoteSource:    src,
+		UpdateMode:     "yahoo_regular",
+		Session:        resolvedLabel,
+		Description:    desc,
+		RTTMs:          rttMs,
+		ChangeBase:     base,
+		ChangeBasis:    "Yahoo常规交易前收",
+		ProviderSymbol: "Yahoo:" + item.Symbol,
 	}
+	if item.RegularMarketTime != nil {
+		q.TradeTime = *item.RegularMarketTime
+	}
+	if item.RegularMarketPreviousClose == nil || !positiveFinite(*item.RegularMarketPreviousClose) {
+		q.ChangeBasis = "Yahoo常规涨跌额对应基准（反推）"
+	}
+	annotateYahooQuoteDate(&q, gmtSec)
 	if err := ValidateQuote(q); err != nil {
 		return Quote{}, err
 	}
 	q.setYahooCapitalization(item.MarketCap, regPrice)
 	return q, nil
+}
+
+func yahooRegularChanges(price float64, previous, change, percent *float64) (float64, float64, float64, error) {
+	if !positiveFinite(price) {
+		return 0, 0, 0, fmt.Errorf("缺少有效常规价格")
+	}
+	base := 0.0
+	if previous != nil && positiveFinite(*previous) {
+		base = *previous
+	} else if change != nil && positiveFinite(price-*change) {
+		base = price - *change
+	}
+	if !positiveFinite(base) {
+		return 0, 0, 0, fmt.Errorf("缺少有效常规涨跌基准")
+	}
+	c := price - base
+	if change != nil {
+		c = *change
+	}
+	p := c / base * 100
+	if percent != nil {
+		p = *percent
+	}
+	return c, p, base, nil
+}
+
+func annotateYahooQuoteDate(q *Quote, gmtOffset int64) {
+	if q.TradeTime <= 0 {
+		return
+	}
+	zone := time.FixedZone("EXCHANGE", int(gmtOffset))
+	if q.Currency == "USD" {
+		zone = newYorkZone
+	}
+	q.QuoteDate = time.Unix(q.TradeTime, 0).In(zone).Format("2006-01-02")
+	q.Session += "（" + q.QuoteDate + "）"
 }
 
 type yahooChartResponse struct {
@@ -1217,60 +1204,37 @@ func ParseYahooChart(expectedSymbol string, body []byte, rttMs float64, now time
 	}
 	state, session := ResolveSessionStateForType(m.MarketState, inst, now, m.GMTOffset)
 
-	var price, changeAbs, changePct float64
-	mode := "24h_fullday_realtime"
-	if m.FulldayPrice != nil && m.FulldayChange != nil && m.FulldayChangePercent != nil && *m.FulldayPrice > 0 {
-		price = *m.FulldayPrice
-		changeAbs = *m.FulldayChange
-		changePct = *m.FulldayChangePercent
-		if state != StateRegular && regPrice > 0 && m.ChartPreviousClose != nil && *m.ChartPreviousClose > 0 {
-			rawPrev := price - changeAbs
-			rawCalc := changeAbs / rawPrev * 100.0
-			if isClose(rawCalc, changePct, 1e-5, 0.05) && math.Abs(*m.ChartPreviousClose-regPrice) > 1e-4 && math.Abs(rawPrev-*m.ChartPreviousClose) < 0.05 {
-				changeAbs = price - regPrice
-				changePct = changeAbs / regPrice * 100.0
-			}
-		}
-	} else if m.RegularMarketPrice != nil && *m.RegularMarketPrice > 0 {
-		price = *m.RegularMarketPrice
-		prev := 0.0
-		if m.ChartPreviousClose != nil && *m.ChartPreviousClose > 0 {
-			prev = *m.ChartPreviousClose
-		} else if m.PreviousClose != nil && *m.PreviousClose > 0 {
-			prev = *m.PreviousClose
-		}
-		if prev <= 0 {
-			return Quote{}, fmt.Errorf("缺少有效昨收基准价")
-		}
-		changeAbs = price - prev
-		if m.RegularMarketChangePercent != nil {
-			changePct = *m.RegularMarketChangePercent
-		} else {
-			changePct = changeAbs / prev * 100.0
-		}
-		mode = "regular_realtime"
-	} else {
-		return Quote{}, fmt.Errorf("缺少有效价格字段")
+	previous := m.PreviousClose
+	if previous == nil || !positiveFinite(*previous) {
+		previous = m.ChartPreviousClose
+	}
+	changeAbs, changePct, base, err := yahooRegularChanges(regPrice, previous, nil, m.RegularMarketChangePercent)
+	if err != nil {
+		return Quote{}, err
 	}
 
 	q := Quote{
-		Symbol:        expectedSymbol,
-		Alias:         quoteAlias(expectedSymbol, desc),
-		Price:         price,
-		ChangePercent: changePct,
-		ChangeAbs:     changeAbs,
-		RegularPrice:  regPrice,
-		Currency:      cur,
-		QuoteType:     inst,
-		MarketState:   strings.ToUpper(strings.TrimSpace(m.MarketState)),
-		State:         state,
-		TradeTime:     m.RegularMarketTime,
-		QuoteSource:   "Yahoo Chart Fallback",
-		UpdateMode:    mode,
-		Session:       session,
-		Description:   desc,
-		RTTMs:         rttMs,
+		Symbol:         expectedSymbol,
+		Alias:          quoteAlias(expectedSymbol, desc),
+		Price:          regPrice,
+		ChangePercent:  changePct,
+		ChangeAbs:      changeAbs,
+		RegularPrice:   regPrice,
+		Currency:       cur,
+		QuoteType:      inst,
+		MarketState:    strings.ToUpper(strings.TrimSpace(m.MarketState)),
+		State:          state,
+		TradeTime:      m.RegularMarketTime,
+		QuoteSource:    "Yahoo Chart Fallback",
+		UpdateMode:     "yahoo_regular",
+		Session:        session + "；显示Yahoo常规主报价",
+		Description:    desc,
+		RTTMs:          rttMs,
+		ChangeBase:     base,
+		ChangeBasis:    "Yahoo常规交易前收",
+		ProviderSymbol: "Yahoo:" + expectedSymbol,
 	}
+	annotateYahooQuoteDate(&q, m.GMTOffset)
 	if err := ValidateQuote(q); err != nil {
 		return Quote{}, err
 	}
@@ -1370,6 +1334,9 @@ func (v View) Tooltip() string {
 					tradeInfo = fmt.Sprintf("；最近成交 %dm%ds 前", tradeAge/60, tradeAge%60)
 				}
 			}
+			if tradeInfo == "" {
+				tradeInfo = "；源报价时间 " + time.Unix(v.Quote.TradeTime, 0).UTC().Format(time.RFC3339)
+			}
 		}
 		srcInfo := ""
 		if v.Quote.QuoteSource != "" {
@@ -1391,8 +1358,12 @@ func (v View) Tooltip() string {
 			}
 			description = fmt.Sprintf("%s (%s)", description, ticker)
 		}
-		return fmt.Sprintf("%s %s: %.*f (%+.2f%%, 涨跌 %+.*f, 常规收盘 %.*f) | %s\n  %s；时段: %s %s%s%s；%s",
-			stateBadge, name, decimals, v.Quote.Price, v.Quote.ChangePercent, decimals, v.Quote.ChangeAbs, decimals, v.Quote.RegularPrice, status,
+		basis := v.Quote.ChangeBasis
+		if basis == "" {
+			basis = "源涨跌额对应基准"
+		}
+		return fmt.Sprintf("%s %s: %.*f (%+.2f%%, 涨跌 %+.*f, 涨跌基准 %.*f — %s) | %s\n  %s；时段: %s %s%s%s；%s",
+			stateBadge, name, decimals, v.Quote.Price, v.Quote.ChangePercent, decimals, v.Quote.ChangeAbs, decimals, v.Quote.Previous(), basis, status,
 			description, stateBadge, session, srcInfo, tradeInfo, fetched) + v.Quote.capitalizationTooltip() + v.Quote.valuationTooltip()
 	}
 	description := TickerFor(v.Symbol)

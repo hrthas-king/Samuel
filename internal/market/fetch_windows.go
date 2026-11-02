@@ -198,80 +198,28 @@ func enrichCapitalizationLocked(ctx context.Context, batch map[string]SymbolResu
 }
 
 func fetchSymbolsLocked(ctx context.Context, syms []string) (map[string]SymbolResult, error) {
-	if usCashIndexSymbols(syms) {
-		return fetchUSCashRealtimeLocked(ctx, syms)
-	}
-	indices := len(syms) > 0
-	for _, symbol := range syms {
-		indices = indices && isGlobalIndex(symbol)
-	}
-	if indices {
-		return fetchIndexQuotes(ctx, syms, fetchTradingViewIndicesLocked, fetchStandardSymbolsLocked)
-	}
-	return fetchStandardSymbolsLocked(ctx, syms)
+	return fetchPinnedQuotes(ctx, syms, fetchYahooSymbolsLocked, fetchTencentSymbolsLocked)
 }
 
-func fetchUSCashRealtimeLocked(ctx context.Context, syms []string) (map[string]SymbolResult, error) {
+func fetchTencentSymbolsLocked(ctx context.Context, syms []string) (map[string]SymbolResult, error) {
 	session, err := ensureSessionLocked()
 	if err != nil {
 		return nil, err
 	}
-	var wire []string
-	for _, symbol := range syms {
-		wire = append(wire, usCashTickers[symbol])
+	query, ok := TencentQueryForSymbols(syms)
+	if !ok {
+		return nil, fmt.Errorf("腾讯源不支持该组合")
 	}
-	path := "/quote-html-webservice/quote.htm?symbols=" + url.QueryEscape(strings.Join(wire, "|")) + "&requestMethod=quick&noform=1&fund=0&exthrs=0&output=json"
-	start := time.Now()
-	status, body, err := doHTTPGet(ctx, session, "quote.cnbc.com", path, false)
-	if err != nil {
-		return nil, fmt.Errorf("实时指数读取失败: %w", err)
-	}
-	if status != 200 {
-		return nil, HTTPError{StatusCode: status}
-	}
-	return parseCNBCIndexBatch(syms, body, float64(time.Since(start).Microseconds())/1000, time.Now())
+	return fetchTencentRealtimeLocked(ctx, session, syms, query)
 }
 
-func fetchTradingViewIndicesLocked(ctx context.Context, syms []string) (map[string]SymbolResult, error) {
-	session, err := ensureSessionLocked()
-	if err != nil {
-		return nil, err
-	}
-	requestBody, err := indexRequest(syms)
-	if err != nil {
-		return nil, err
-	}
-	start := time.Now()
-	status, body, err := doHTTPRequest(ctx, session, TradingViewHost, "/global/scan", false, "POST", requestBody)
-	if err != nil {
-		return nil, err
-	}
-	if status != 200 {
-		return nil, HTTPError{StatusCode: status}
-	}
-	rtt := float64(time.Since(start).Microseconds()) / 1000
-	return parseIndexQuotes(syms, body, rtt, time.Now())
-}
-
-func fetchStandardSymbolsLocked(ctx context.Context, syms []string) (map[string]SymbolResult, error) {
+func fetchYahooSymbolsLocked(ctx context.Context, syms []string) (map[string]SymbolResult, error) {
 	session, err := ensureSessionLocked()
 	if err != nil {
 		return nil, err
 	}
 
-	// 优先使用腾讯行情；每个标的的行情时间由数据源提供。
-	if tQuery, ok := TencentQueryForSymbols(syms); ok {
-		tBatch, tErr := fetchTencentRealtimeLocked(ctx, session, syms, tQuery)
-		if tErr == nil {
-			return tBatch, nil
-		}
-		// 中国市场股票和ETF保留腾讯数据源；失败时不混入时效未经核实的Yahoo报价。
-		if customSymbols(syms) || (len(syms) == 2 && isTrackedSZETF(syms[0]) && isTrackedSZETF(syms[1])) {
-			return tBatch, fmt.Errorf("腾讯中国市场行情请求失败: %w", tErr)
-		}
-	}
-
-	// 2. 国际市场或腾讯备用时，调用 Yahoo Finance v7
+	// Both endpoints are Yahoo; provider pinning survives fallback.
 	batch, err := fetchV7OvernightLocked(ctx, session, syms)
 	if err == nil {
 		return batch, nil

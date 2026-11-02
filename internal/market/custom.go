@@ -160,6 +160,7 @@ func parseCustomQuoteBatch(symbols []string, body []byte, rtt float64, now time.
 			state, label := resolveMainlandSession(now, at.Unix())
 			change := price - prev
 			q := Quote{Symbol: sym, Alias: strings.TrimSpace(name), Description: strings.TrimSpace(name), Price: price, RegularPrice: prev, ChangeAbs: change, ChangePercent: change / prev * 100, Currency: "CNY", QuoteType: quoteType, State: state, Session: label, TradeTime: at.Unix(), QuoteSource: "Tencent Finance", UpdateMode: mode, RTTMs: rtt, MarketState: "CLOSED"}
+			q.ChangeBase, q.ChangeBasis = prev, "腾讯前收"
 			if state == StateRegular {
 				q.MarketState = "REGULAR"
 			} else if state == StatePreMarket {
