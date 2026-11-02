@@ -29,7 +29,7 @@ func TestStockCapitalizationNativeRowsAndAssetFiltering(t *testing.T) {
 	apple.Capitalization = &market.Capitalization{USD: 5.14e12, Estimated: true}
 	etf := market.Quote{Symbol: "VOO", Alias: "VOO", QuoteType: "ETF", Price: 702.97, ChangePercent: -.62, State: market.StatePostMarket,
 		Capitalization: &market.Capitalization{USD: 1e12}} // must not be shown for an ETF
-	for _, kind := range []string{"stocks", "mixed", "etfs"} {
+	for _, kind := range []string{"stocks", "mixed", "etfs", "indices", "missing_indices", "index_etf"} {
 		for _, pct := range []int{75, 100, 130} {
 			for _, dpi := range []float64{1, 2} {
 				t.Run(fmt.Sprintf("%s/%d/%g", kind, pct, dpi), func(t *testing.T) {
@@ -54,6 +54,20 @@ func TestStockCapitalizationNativeRowsAndAssetFiltering(t *testing.T) {
 						second = etf
 					} else if kind == "etfs" {
 						first, second = etf, etf
+					} else if kind == "indices" || kind == "missing_indices" || kind == "index_etf" {
+						pePct, pbPct := 23.5, 60.0
+						first = market.Quote{Symbol: "^NDX", Alias: "纳指100", QuoteType: "INDEX", Price: 28384.85, ChangePercent: -3.46, State: market.StateClosed,
+							Valuation: &market.IndexValuation{PE: &market.ValuationMetric{Value: 27.04, Percentile: &pePct}, PB: &market.ValuationMetric{Value: 8.65, Percentile: &pbPct}}}
+						second = first
+						second.Symbol, second.Alias, second.Price = "^GSPC", "标普500", 7580.07
+						second.ChangePercent = -1.82
+						spPE, spPB := 52.7, 92.3
+						second.Valuation = &market.IndexValuation{PE: &market.ValuationMetric{Value: 24.86, Percentile: &spPE}, PB: &market.ValuationMetric{Value: 5.44, Percentile: &spPB}}
+						if kind == "missing_indices" {
+							first.Valuation, second.Valuation = nil, nil
+						} else if kind == "index_etf" {
+							second = etf
+						}
 					}
 					snap := app.Snapshot{Status: monitor.Online, Geo: ipinfo.Info{Country: "US"}, Quotes: []market.View{
 						{Symbol: first.Symbol, Quote: &first, Healthy: true}, {Symbol: second.Symbol, Quote: &second, Healthy: true},

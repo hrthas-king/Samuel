@@ -37,6 +37,8 @@ const (
 	ActionGroupAsiaIndices
 	ActionGroupEUIndices
 	ActionGroupETF159632159655
+	ActionGroupUSIndices
+	ActionGroupCNComposite
 	ActionScale75
 	ActionScale85
 	ActionScale90
@@ -54,7 +56,7 @@ const (
 )
 
 func GroupForAction(act Action) (string, bool) {
-	if act < ActionGroupVOOQQQ || act > ActionGroupETF159632159655 {
+	if act < ActionGroupVOOQQQ || act > ActionGroupCNComposite {
 		return "", false
 	}
 	idx := int(act - ActionGroupVOOQQQ)
@@ -763,7 +765,7 @@ func (u *UI) drawBar(dc, hwnd uintptr) {
 	}
 	twoRows := false
 	for _, view := range views {
-		if view.Quote != nil && view.Quote.IsEquity() {
+		if view.Quote != nil && view.Quote.HasSecondaryLine() {
 			twoRows = true
 			break
 		}
@@ -811,9 +813,9 @@ func (u *UI) drawBar(dc, hwnd uintptr) {
 			}
 		}
 		curX = u.drawFlowTextRow(dc, text, curX, pctColor, 0, rowBottom)
-		if v.Quote != nil && v.Quote.IsEquity() {
+		if v.Quote != nil && v.Quote.HasSecondaryLine() {
 			prior, _, _ := selectObject.Call(dc, u.capFont)
-			capRight := u.drawFlowTextRow(dc, v.Quote.CapitalizationText(), nameLeft, colorRef(175, 185, 198), rowBottom, u.height)
+			capRight := u.drawFlowTextRow(dc, v.Quote.SecondaryText(), nameLeft, colorRef(175, 185, 198), rowBottom, u.height)
 			selectObject.Call(dc, prior)
 			curX = max(curX, capRight)
 		}

@@ -29,6 +29,8 @@ var validMarketGroups = map[string]bool{
 	"asia_indices":      true,
 	"eu_indices":        true,
 	"etf_159632_159655": true,
+	"us_indices":        true,
+	"cn_composite":      true,
 }
 
 type Config struct {

@@ -57,6 +57,15 @@ func ensureSessionLocked() (uintptr, error) {
 	if sessHandle != 0 {
 		return sessHandle, nil
 	}
+	session, err := newHTTPSession()
+	if err != nil {
+		return 0, err
+	}
+	sessHandle = session
+	return session, nil
+}
+
+func newHTTPSession() (uintptr, error) {
 	agent := winapi.UTF16("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 	s, _, err := open.Call(uintptr(unsafe.Pointer(agent)), 4, 0, 0, 0)
 	runtime.KeepAlive(agent)
@@ -67,8 +76,7 @@ func ensureSessionLocked() (uintptr, error) {
 		closeHandle.Call(s)
 		return 0, winapi.Error("WinHttpSetTimeouts", err)
 	}
-	sessHandle = s
-	return sessHandle, nil
+	return s, nil
 }
 
 func resetSessionLocked() {
@@ -126,7 +134,33 @@ func Fetch(ctx context.Context) (map[string]SymbolResult, error) {
 		batch, err = fetchSymbolsLocked(ctx, group.Symbols)
 	}
 	enrichCapitalizationLocked(ctx, batch)
+	indexValuations.attach(batch, time.Now())
 	return batch, err
+}
+
+var indexValuations = valuationStore{fetch: fetchIndexValuation}
+
+func fetchIndexValuation(ctx context.Context, symbol string) (*IndexValuation, error) {
+	code := valuationCodes[symbol]
+	if code == "" {
+		return nil, fmt.Errorf("暂无可核实的同指数历史来源")
+	}
+	session, err := newHTTPSession()
+	if err != nil {
+		return nil, err
+	}
+	defer closeHandle.Call(session)
+	if ok, _, err := setTimeouts.Call(session, 800, TimeoutMillis, 3000, 3000); ok == 0 {
+		return nil, winapi.Error("WinHttpSetTimeouts(valuation)", err)
+	}
+	status, body, err := doHTTPRequestLimited(ctx, session, "guchacha.com", "/api/index/valuation/"+code, false, "GET", nil, maxValuationBody)
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 {
+		return nil, HTTPError{StatusCode: status}
+	}
+	return parseIndexValuation(symbol, body, time.Now())
 }
 
 func enrichCapitalizationLocked(ctx context.Context, batch map[string]SymbolResult) {
@@ -382,6 +416,10 @@ func doHTTPGet(ctx context.Context, session uintptr, host, path string, enableCo
 }
 
 func doHTTPRequest(ctx context.Context, session uintptr, host, path string, enableCookies bool, method string, requestBody []byte) (int, []byte, error) {
+	return doHTTPRequestLimited(ctx, session, host, path, enableCookies, method, requestBody, MaxBody)
+}
+
+func doHTTPRequestLimited(ctx context.Context, session uintptr, host, path string, enableCookies bool, method string, requestBody []byte, maxBytes int) (int, []byte, error) {
 	defer runtime.KeepAlive(requestBody)
 	hostPtr := winapi.UTF16(host)
 	conn, _, err := connect.Call(session, uintptr(unsafe.Pointer(hostPtr)), 443, 0)
@@ -453,8 +491,8 @@ func doHTTPRequest(ctx context.Context, session uintptr, host, path string, enab
 		if n == 0 {
 			break
 		}
-		if n > uint32(len(chunk)) || len(body)+int(n) > MaxBody {
-			return int(status), nil, fmt.Errorf("行情响应超过 %d 字节上限", MaxBody)
+		if n > uint32(len(chunk)) || len(body)+int(n) > maxBytes {
+			return int(status), nil, fmt.Errorf("行情响应超过 %d 字节上限", maxBytes)
 		}
 		body = append(body, chunk[:n]...)
 	}

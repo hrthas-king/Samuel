@@ -223,7 +223,7 @@ func TestFluentNativeLightDarkRenderingAndInputFocus(t *testing.T) {
 	defer runtime.UnlockOSThread()
 	cfg := config.Default()
 	cfg.UIScalePercent = 75
-	u := NewUI("v1.0.6", cfg)
+	u := NewUI("v1.0.8", cfg)
 	u.openCustomPanel(false)
 	defer u.closeCustomPanel()
 	p := u.customPanel

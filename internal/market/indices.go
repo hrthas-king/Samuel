@@ -22,6 +22,8 @@ var indexSpecs = map[string]indexSpec{
 	"^KS11":  {"KRX:KOSPI", "KRW", false},
 	"^FCHI":  {"TVC:CAC40", "EUR", true},
 	"^GDAXI": {"TVC:DEU40", "EUR", true},
+	"^NDX":   {"NASDAQ:NDX", "USD", false},
+	"^GSPC":  {"SP:SPX", "USD", false},
 }
 
 func isGlobalIndex(symbol string) bool {
@@ -114,9 +116,8 @@ func parseIndexQuote(symbol string, values []json.RawMessage, rtt float64, now t
 			return Quote{}, fmt.Errorf("指数行情字段无效")
 		}
 	}
-	// KRX's index series has no currency field. Its identity is bound to the
-	// exact KRX ticker; no other missing or mismatching currency is accepted.
-	if currency == "" && spec.ticker == "KRX:KOSPI" {
+	// These official index series omit currency; exact ticker identity binds it.
+	if currency == "" && (spec.ticker == "KRX:KOSPI" || spec.ticker == "NASDAQ:NDX" || spec.ticker == "SP:SPX") {
 		currency = spec.currency
 	}
 	if price == nil || percent == nil || change == nil || kind != "index" || currency != spec.currency {

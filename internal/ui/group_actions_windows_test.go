@@ -33,4 +33,9 @@ func TestMarketGroupActionsIncludeETFPairWithoutCollidingWithScale(t *testing.T)
 	if scale, ok := ScaleForAction(ActionScale75); !ok || scale != 75 {
 		t.Fatalf("first size action returned %d, %v", scale, ok)
 	}
+	for action, want := range map[Action]string{ActionGroupUSIndices: market.GroupUSIndices, ActionGroupCNComposite: market.GroupCNComposite} {
+		if got, ok := GroupForAction(action); !ok || got != want {
+			t.Fatalf("new index menu action selected %q instead of %q", got, want)
+		}
+	}
 }

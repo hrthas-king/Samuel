@@ -32,6 +32,8 @@ const (
 	GroupAsiaIndices     = "asia_indices"
 	GroupEUIndices       = "eu_indices"
 	GroupETF159632159655 = "etf_159632_159655"
+	GroupUSIndices       = "us_indices"
+	GroupCNComposite     = "cn_composite"
 	DefaultGroup         = GroupVOOQQQ
 )
 
@@ -69,7 +71,7 @@ type GroupSpec struct {
 }
 
 var Groups = []GroupSpec{
-	{ID: GroupVOOQQQ, MenuLabel: "标普 / 纳指 (VOO / QQQ)", Symbols: []string{"VOO", "QQQ"}},
+	{ID: GroupVOOQQQ, MenuLabel: "标普 / 纳指 ETF (VOO / QQQ)", Symbols: []string{"VOO", "QQQ"}},
 	{ID: GroupSOXXSMH, MenuLabel: "半导体 ETF (SOXX / SMH)", Symbols: []string{"SOXX", "SMH"}},
 	{ID: GroupTop2US, MenuLabel: "美股市值前二 (NVDA / AAPL) · 2026-10-29核对", Symbols: []string{"NVDA", "AAPL"}},
 	{ID: GroupGoldOil, MenuLabel: "黄金 / 布伦特原油 (GC / BZ)", Symbols: []string{"GC=F", "BZ=F"}},
@@ -78,6 +80,8 @@ var Groups = []GroupSpec{
 	{ID: GroupAsiaIndices, MenuLabel: "日韩指数 (TradingView · 日经参考 / 韩国综合)", Symbols: []string{"^N225", "^KS11"}},
 	{ID: GroupEUIndices, MenuLabel: "欧洲参考指数 (TradingView · CAC / DAX)", Symbols: []string{"^FCHI", "^GDAXI"}},
 	{ID: GroupETF159632159655, MenuLabel: "华安纳指ETF / 华夏标普500ETF", Symbols: []string{"159632.SZ", "159655.SZ"}},
+	{ID: GroupUSIndices, MenuLabel: "美股指数 (纳斯达克100 / 标普500)", Symbols: []string{"^NDX", "^GSPC"}},
+	{ID: GroupCNComposite, MenuLabel: "沪深指数 (上证 / 深证成指)", Symbols: []string{"000001.SS", "399001.SZ"}},
 }
 
 var (
@@ -96,6 +100,9 @@ var (
 		"BZ=F":      "布油",
 		"000001.SS": "上证",
 		"399006.SZ": "创指",
+		"399001.SZ": "深证",
+		"^NDX":      "纳指100",
+		"^GSPC":     "标普500",
 		"^HSI":      "恒指",
 		"^HSTECH":   "恒科",
 		"^N225":     "日经",
@@ -118,6 +125,9 @@ var (
 		"BZ=F":      "ICE:BZ",
 		"000001.SS": "SSE:000001",
 		"399006.SZ": "SZSE:399006",
+		"399001.SZ": "SZSE:399001",
+		"^NDX":      "NASDAQ:NDX",
+		"^GSPC":     "SP:SPX",
 		"^HSI":      "HKEX:HSI",
 		"^HSTECH":   "HKEX:HSTECH",
 		"^N225":     "OSE:N225",
@@ -245,6 +255,7 @@ type Quote struct {
 	Reference      bool            `json:"reference,omitempty"`
 	DelaySeconds   int             `json:"delay_seconds,omitempty"`
 	Capitalization *Capitalization `json:"capitalization,omitempty"`
+	Valuation      *IndexValuation `json:"valuation,omitempty"`
 }
 
 func (q Quote) Previous() float64 {
@@ -548,7 +559,7 @@ func resolveCNHKSession(sym string, now time.Time, tradeTime int64) (SessionStat
 		}
 	}
 	mins := local.Hour()*60 + local.Minute()
-	if sym == "000001.SS" || sym == "399006.SZ" {
+	if sym == "000001.SS" || sym == "399006.SZ" || sym == "399001.SZ" {
 		switch {
 		case mins >= 9*60+15 && mins < 9*60+30:
 			return StatePreMarket, "集合竞价 (Pre-Market)"
@@ -575,7 +586,7 @@ func resolveCNHKSession(sym string, now time.Time, tradeTime int64) (SessionStat
 
 func currencyForSymbol(sym string) string {
 	switch sym {
-	case "000001.SS", "399006.SZ", "159632.SZ", "159655.SZ":
+	case "000001.SS", "399006.SZ", "399001.SZ", "159632.SZ", "159655.SZ":
 		return "CNY"
 	case "^HSI", "^HSTECH":
 		return "HKD"
@@ -592,7 +603,7 @@ func currencyForSymbol(sym string) string {
 
 func resolveIndexSession(sym string, now time.Time, tradeTime int64) (SessionState, string) {
 	switch sym {
-	case "000001.SS", "399006.SZ", "159632.SZ", "159655.SZ", "^HSI", "^HSTECH":
+	case "000001.SS", "399006.SZ", "399001.SZ", "159632.SZ", "159655.SZ", "^HSI", "^HSTECH":
 		return resolveCNHKSession(sym, now, tradeTime)
 	case "^N225":
 		jstZone := time.FixedZone("JST", 9*3600)
@@ -666,6 +677,7 @@ func resolveIndexSession(sym string, now time.Time, tradeTime int64) (SessionSta
 var tencentSymbolMap = map[string]string{
 	"000001.SS": "sh000001",
 	"399006.SZ": "sz399006",
+	"399001.SZ": "sz399001",
 	"159632.SZ": "sz159632",
 	"159655.SZ": "sz159655",
 	"^HSI":      "r_hkHSI",
@@ -681,6 +693,7 @@ var tencentSymbolMap = map[string]string{
 var tencentVarToSymbol = map[string]string{
 	"v_sh000001":   "000001.SS",
 	"v_sz399006":   "399006.SZ",
+	"v_sz399001":   "399001.SZ",
 	"v_sz159632":   "159632.SZ",
 	"v_sz159655":   "159655.SZ",
 	"v_r_hkHSI":    "^HSI",
@@ -704,6 +717,9 @@ var commodityDescriptions = map[string]string{
 	"BZ=F":      "ICE 布伦特原油 (Brent Crude)",
 	"000001.SS": "上证综合指数 (SSE Composite)",
 	"399006.SZ": "创业板指数 (ChiNext)",
+	"399001.SZ": "深证成份指数 (Shenzhen Component)",
+	"^NDX":      "纳斯达克100指数 (Nasdaq-100)",
+	"^GSPC":     "标普500指数 (S&P 500)",
 	"159632.SZ": "纳斯达克ETF华安 (QDII)",
 	"159655.SZ": "标普500ETF华夏 (QDII)",
 	"^HSI":      "恒生指数 (Hang Seng Index)",
@@ -958,6 +974,12 @@ func ParseTencentQuoteBatch(expectedSymbols []string, body []byte, rttMs float64
 				Session:       session,
 				Description:   desc,
 				RTTMs:         rttMs,
+			}
+			if quoteType == "INDEX" && len(parts) > 46 {
+				code := strings.TrimPrefix(strings.TrimSuffix(strings.TrimSuffix(sym, ".SS"), ".SZ"), "^")
+				if strings.TrimSpace(parts[2]) == code {
+					q.setTencentIndexValuation(parts[39], parts[46])
+				}
 			}
 			if err := ValidateQuote(q); err != nil {
 				out[sym] = SymbolResult{Err: err.Error()}
@@ -1367,7 +1389,7 @@ func (v View) Tooltip() string {
 		}
 		return fmt.Sprintf("%s %s: %.*f (%+.2f%%, 涨跌 %+.*f, 常规收盘 %.*f) | %s\n  %s；时段: %s %s%s%s；%s",
 			stateBadge, name, decimals, v.Quote.Price, v.Quote.ChangePercent, decimals, v.Quote.ChangeAbs, decimals, v.Quote.RegularPrice, status,
-			description, stateBadge, session, srcInfo, tradeInfo, fetched) + v.Quote.capitalizationTooltip()
+			description, stateBadge, session, srcInfo, tradeInfo, fetched) + v.Quote.capitalizationTooltip() + v.Quote.valuationTooltip()
 	}
 	description := TickerFor(v.Symbol)
 	if isTrackedSZETF(v.Symbol) {

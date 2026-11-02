@@ -53,6 +53,7 @@ jobs:
           mkdir -p dist/assets
           cp assets/fluent-*.png dist/assets/
           cp assets/capitalization-*.png dist/assets/
+          cp assets/valuation-*.png dist/assets/
           cd dist
           zip -r "Samuel-$RELEASE_VERSION-windows-$RELEASE_ARCH.zip" Samuel.exe Samuel.ico README.md LICENSE docs assets
       - uses: actions/upload-artifact@v4
