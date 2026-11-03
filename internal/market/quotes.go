@@ -1057,10 +1057,6 @@ func parseYahooQuoteItem(item yahooQuoteItem, rttMs float64, now time.Time) (Quo
 		regPrice = *item.RegularMarketPrice
 	}
 
-	change, percent, base, err := yahooRegularChanges(regPrice, item.RegularMarketPreviousClose, item.RegularMarketChange, item.RegularMarketChangePercent)
-	if err != nil {
-		return Quote{}, err
-	}
 	rawState := strings.ToUpper(strings.TrimSpace(item.MarketState))
 
 	gmtSec := item.GMTOffsetMilliseconds / 1000
@@ -1078,8 +1074,6 @@ func parseYahooQuoteItem(item yahooQuoteItem, rttMs float64, now time.Time) (Quo
 		Symbol:         item.Symbol,
 		Alias:          quoteAlias(item.Symbol, desc),
 		Price:          regPrice,
-		ChangePercent:  percent,
-		ChangeAbs:      change,
 		RegularPrice:   regPrice,
 		Currency:       cur,
 		QuoteType:      qt,
@@ -1091,15 +1085,22 @@ func parseYahooQuoteItem(item yahooQuoteItem, rttMs float64, now time.Time) (Quo
 		Session:        resolvedLabel,
 		Description:    desc,
 		RTTMs:          rttMs,
-		ChangeBase:     base,
 		ChangeBasis:    "Yahoo常规交易前收",
 		ProviderSymbol: "Yahoo:" + item.Symbol,
 	}
-	if item.RegularMarketTime != nil {
-		q.TradeTime = *item.RegularMarketTime
-	}
-	if item.RegularMarketPreviousClose == nil || !positiveFinite(*item.RegularMarketPreviousClose) {
-		q.ChangeBasis = "Yahoo常规涨跌额对应基准（反推）"
+	if !applyYahooNightQuote(&q, item, now) {
+		change, percent, base, err := yahooRegularChanges(regPrice, item.RegularMarketPreviousClose, item.RegularMarketChange, item.RegularMarketChangePercent)
+		if err != nil {
+			return Quote{}, err
+		}
+		q.ChangeAbs, q.ChangePercent, q.ChangeBase = change, percent, base
+		if item.RegularMarketTime != nil {
+			q.TradeTime = *item.RegularMarketTime
+		}
+		if item.RegularMarketPreviousClose == nil || !positiveFinite(*item.RegularMarketPreviousClose) {
+			q.ChangeBasis = "Yahoo常规涨跌额对应基准（反推）"
+		}
+		yahooNightFallback(&q, now)
 	}
 	annotateYahooQuoteDate(&q, gmtSec)
 	if err := ValidateQuote(q); err != nil {
@@ -1234,6 +1235,9 @@ func ParseYahooChart(expectedSymbol string, body []byte, rttMs float64, now time
 		ChangeBasis:    "Yahoo常规交易前收",
 		ProviderSymbol: "Yahoo:" + expectedSymbol,
 	}
+	// The chart endpoint has no verifiable overnight timestamp. Its full-day
+	// price must not masquerade as an overnight session quote.
+	yahooNightFallback(&q, now)
 	annotateYahooQuoteDate(&q, m.GMTOffset)
 	if err := ValidateQuote(q); err != nil {
 		return Quote{}, err
