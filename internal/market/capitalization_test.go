@@ -9,18 +9,25 @@ import (
 	"time"
 )
 
-func TestCompanyCapitalizationPreservesMultiClassTotalWithRegularHeadline(t *testing.T) {
-	now := time.Date(2026, 10, 29, 21, 0, 0, 0, time.UTC)
+func TestCompanyCapitalizationPreservesMultiClassTotalAcrossSessions(t *testing.T) {
 	for _, state := range []string{"REGULAR", "POST"} {
 		t.Run(state, func(t *testing.T) {
-			body := []byte(fmt.Sprintf(`{"quoteResponse":{"result":[{"symbol":"GOOGL","currency":"USD","quoteType":"EQUITY","marketState":%q,"gmtOffSetMilliseconds":-14400000,"regularMarketPrice":100,"regularMarketChange":1,"regularMarketChangePercent":1.010101,"regularMarketTime":1793304000,"postMarketPrice":110,"postMarketChange":10,"postMarketChangePercent":10,"postMarketTime":1793304060,"marketCap":3000000000000,"sharesOutstanding":10000000000}]}}`, state))
+			now := time.Date(2026, 10, 29, 19, 0, 0, 0, time.UTC)
+			regularAt := now.Add(-5 * time.Second).Unix()
+			if state == "POST" {
+				now, regularAt = time.Date(2026, 10, 29, 21, 0, 0, 0, time.UTC), 1793304000
+			}
+			body := []byte(fmt.Sprintf(`{"quoteResponse":{"result":[{"symbol":"GOOGL","currency":"USD","quoteType":"EQUITY","marketState":%q,"gmtOffSetMilliseconds":-14400000,"regularMarketPrice":100,"regularMarketChange":1,"regularMarketChangePercent":1.010101,"regularMarketTime":%d,"postMarketPrice":110,"postMarketChange":10,"postMarketChangePercent":10,"postMarketTime":1793304060,"marketCap":3000000000000,"sharesOutstanding":10000000000}]}}`, state, regularAt))
 			batch, err := ParseYahooQuoteBatchForSymbols([]string{"GOOGL"}, body, 20, now)
 			if err != nil || batch["GOOGL"].Quote == nil {
 				t.Fatalf("quote failed: %v %#v", err, batch)
 			}
 			q := batch["GOOGL"].Quote
-			want := 3e12
-			if q.Price != 100 || q.Capitalization == nil || math.Abs(q.Capitalization.USD-want) > 1 || q.Capitalization.Estimated {
+			want, price, estimated := 3e12, 100.0, false
+			if state == "POST" {
+				want, price, estimated = 3.3e12, 110, true
+			}
+			if q.Price != price || q.Capitalization == nil || math.Abs(q.Capitalization.USD-want) > 1 || q.Capitalization.Estimated != estimated {
 				t.Fatalf("company-wide market cap replaced by one share class or not repriced: %#v", q.Capitalization)
 			}
 		})

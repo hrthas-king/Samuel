@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-func TestYahooMainQuoteKeepsRegularPriceAndDailyChangeDuringPremarket(t *testing.T) {
+func TestYahooPremarketKeepsMatchingPriceChangeAndCloseBase(t *testing.T) {
 	body := []byte(`{"quoteResponse":{"result":[{"symbol":"NVDA","currency":"USD","quoteType":"EQUITY","marketState":"PRE","regularMarketPrice":204.64,"regularMarketPreviousClose":213.66,"regularMarketChange":-9.020004,"regularMarketChangePercent":-4.2216625,"regularMarketTime":1793390401,"preMarketPrice":206.15,"preMarketChange":1.5099945,"preMarketChangePercent":0.7378785,"preMarketTime":1793626197}]}}`)
 	batch, err := ParseYahooQuoteBatchForSymbols([]string{"NVDA"}, body, 10, time.Date(2026, 11, 2, 14, 20, 0, 0, time.UTC))
 	q := batch["NVDA"].Quote
-	if err != nil || q == nil || q.Price != 204.64 || math.Abs(q.ChangePercent-(-4.2216625)) > 1e-7 || math.Abs(q.Previous()-213.66) > .001 {
-		t.Fatalf("Yahoo main line mixed with premarket: %v %#v", err, q)
+	if err != nil || q == nil || q.Price != 206.15 || math.Abs(q.ChangePercent-0.7378785) > 1e-7 || math.Abs(q.Previous()-204.64) > .001 || q.UpdateMode != "yahoo_pre" {
+		t.Fatalf("Yahoo premarket fields were mixed with regular daily fields: %v %#v", err, q)
 	}
 }
 
@@ -72,7 +72,7 @@ func TestQuoteBasisIsVisibleAndNotAnInferredDifferentSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	tip := (View{Symbol: "NVDA", Quote: batch["NVDA"].Quote, Healthy: true}).Tooltip()
-	if !strings.Contains(tip, "涨跌基准") || !strings.Contains(tip, "常规主报价") {
+	if !strings.Contains(tip, "涨跌基准") || !strings.Contains(tip, "常规收盘") {
 		t.Fatal("price/change convention not visible:", tip)
 	}
 }

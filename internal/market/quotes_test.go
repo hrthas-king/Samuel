@@ -2,6 +2,7 @@ package market
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -80,12 +81,12 @@ func TestMultiMarketGroupsCurrenciesAndIndices(t *testing.T) {
 	}
 
 	auctionHK := time.Date(2026, 10, 26, 1, 15, 0, 0, time.UTC) // 2026-10-26 09:15 HKT (周一盘前竞价)
-	hkPreBatch, err := ParseYahooQuoteBatch(hkJSON, 110.0, auctionHK)
+	hkPreBatch, err := ParseYahooQuoteBatch(hkJSON, 110.0, auctionHK.AddDate(0, 0, 1))
 	if err != nil {
 		t.Fatalf("HK indices auction parse failed: %v", err)
 	}
-	if hkPreBatch["^HSI"].Quote.State != StatePreMarket || hkPreBatch["^HSTECH"].Quote.State != StatePreMarket {
-		t.Fatalf("expected HSI/HSTECH at 09:15 HKT to be StatePreMarket, got: %v / %v", hkPreBatch["^HSI"].Quote.State, hkPreBatch["^HSTECH"].Quote.State)
+	if hkPreBatch["^HSI"].Quote.State != StateClosed || hkPreBatch["^HSTECH"].Quote.State != StateClosed {
+		t.Fatalf("cash-index prior close must not pretend to be a premarket quote: %v / %v", hkPreBatch["^HSI"].Quote.State, hkPreBatch["^HSTECH"].Quote.State)
 	}
 
 	// 3. 欧洲指数 (EUR & POST/POSTPOST/CLOSED 现金指数收盘后均应为 StateClosed)
@@ -189,7 +190,7 @@ func TestParseYahooChartAndSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected QQQ parse error: %v", err)
 	}
-	if qQQQ.Price != 704.40 || math.Abs(qQQQ.ChangeAbs - -0.07) > 1e-4 || qQQQ.State != StatePreMarket || qQQQ.UpdateMode != "yahoo_regular" {
+	if qQQQ.Price != 704.40 || math.Abs(qQQQ.ChangeAbs - -0.07) > 1e-4 || qQQQ.State != StateClosed || qQQQ.UpdateMode != "yahoo_regular" {
 		t.Fatalf("unexpected QQQ quote: %+v", qQQQ)
 	}
 
@@ -334,20 +335,23 @@ func TestParseTencentQuoteBatch_Commodities(t *testing.T) {
 	if gc.Price != 4019.64 || gc.Alias != "黄金" || gc.Currency != "USD" || gc.QuoteType != "FUTURE" {
 		t.Fatalf("unexpected GC quote: %+v", gc)
 	}
-	if gc.State != StateRegular || gc.Session != "24h 实时交易 (Regular)" {
+	if gc.State != StateRegular || gc.Session != "期货交易中" {
 		t.Fatalf("unexpected GC session state: %v (%s)", gc.State, gc.Session)
 	}
-	if bz.Price != 109.65 || bz.Alias != "布油" || bz.QuoteSource != "Tencent Real Time" {
+	if bz.Price != 109.65 || bz.Alias != "布油" || bz.QuoteSource != "Tencent Finance" {
 		t.Fatalf("unexpected BZ quote: %+v", bz)
 	}
 
 	saturdayNoon := time.Date(2026, 10, 24, 4, 0, 0, 0, time.UTC)
-	batchWknd, err := ParseTencentQuoteBatch(syms, raw, 65.0, saturdayNoon)
+	batchWknd, err := ParseTencentQuoteBatch(syms, []byte(strings.ReplaceAll(string(raw), "2026-10-27", "2026-10-23")), 65.0, saturdayNoon)
 	if err != nil {
 		t.Fatalf("unexpected error on weekend: %v", err)
 	}
 	if batchWknd["GC=F"].Quote.State != StateClosed || batchWknd["BZ=F"].Quote.State != StateClosed {
 		t.Fatalf("expected StateClosed on weekend, got %v / %v", batchWknd["GC=F"].Quote.State, batchWknd["BZ=F"].Quote.State)
+	}
+	if batchWknd["GC=F"].Quote.MarketState != "CLOSED" || batchWknd["BZ=F"].Quote.MarketState != "CLOSED" {
+		t.Fatal("commodity diagnostic state disagrees with the displayed closed state")
 	}
 }
 

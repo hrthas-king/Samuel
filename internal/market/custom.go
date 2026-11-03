@@ -154,10 +154,14 @@ func parseCustomQuoteBatch(symbols []string, body []byte, rtt float64, now time.
 			if e1 != nil || e2 != nil || e3 != nil || at.After(now.Add(30*time.Second)) {
 				return SymbolResult{Err: "股票价格或行情时间无效"}
 			}
-			if price == 0 && prev > 0 {
+			noTradePrice := price == 0
+			if noTradePrice && prev > 0 {
 				price = prev
 			} // suspended stock: retain the previous close
 			state, label := resolveMainlandSession(now, at.Unix())
+			if noTradePrice {
+				state, label = StateClosed, "尚无有效成交价；显示前收"
+			}
 			change := price - prev
 			q := Quote{Symbol: sym, Alias: strings.TrimSpace(name), Description: strings.TrimSpace(name), Price: price, RegularPrice: prev, ChangeAbs: change, ChangePercent: change / prev * 100, Currency: "CNY", QuoteType: quoteType, State: state, Session: label, TradeTime: at.Unix(), QuoteSource: "Tencent Finance", UpdateMode: mode, RTTMs: rtt, MarketState: "CLOSED"}
 			q.ChangeBase, q.ChangeBasis = prev, "腾讯前收"

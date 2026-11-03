@@ -160,13 +160,13 @@ func TestSZETFTradingSessions(t *testing.T) {
 		label   string
 	}{
 		{"before_market", time.Date(2026, 10, 28, 9, 0, 0, 0, zone), time.Date(2026, 10, 27, 15, 0, 0, 0, zone), StateClosed, "休市"},
-		{"auction", time.Date(2026, 10, 28, 9, 20, 0, 0, zone), time.Date(2026, 10, 27, 15, 0, 0, 0, zone), StatePreMarket, "集合竞价"},
+		{"auction", time.Date(2026, 10, 28, 9, 20, 0, 0, zone), time.Date(2026, 10, 28, 9, 20, 0, 0, zone), StatePreMarket, "集合竞价"},
 		{"morning", time.Date(2026, 10, 28, 9, 30, 0, 0, zone), time.Date(2026, 10, 28, 9, 30, 0, 0, zone), StateRegular, "盘中"},
 		{"lunch", time.Date(2026, 10, 28, 11, 30, 0, 0, zone), time.Date(2026, 10, 28, 11, 29, 0, 0, zone), StateClosed, "午间休市"},
 		{"afternoon", time.Date(2026, 10, 28, 13, 0, 0, 0, zone), time.Date(2026, 10, 28, 13, 0, 0, 0, zone), StateRegular, "盘中"},
 		{"close", time.Date(2026, 10, 28, 15, 0, 0, 0, zone), time.Date(2026, 10, 28, 15, 0, 0, 0, zone), StateClosed, "休市"},
 		{"weekend", time.Date(2026, 10, 31, 10, 0, 0, 0, zone), time.Date(2026, 10, 30, 15, 0, 0, 0, zone), StateClosed, "周末休市"},
-		{"missing_current_day", time.Date(2026, 10, 28, 10, 0, 0, 0, zone), time.Date(2026, 10, 27, 15, 0, 0, 0, zone), StateClosed, "日期未更新"},
+		{"missing_current_day", time.Date(2026, 10, 28, 10, 0, 0, 0, zone), time.Date(2026, 10, 27, 15, 0, 0, 0, zone), StateClosed, "未更新"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, sym := range []string{"159632.SZ", "159655.SZ"} {

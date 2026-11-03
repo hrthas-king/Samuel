@@ -235,30 +235,31 @@ func (e HTTPError) Error() string {
 }
 
 type Quote struct {
-	Symbol         string          `json:"symbol"`
-	Alias          string          `json:"alias"`
-	Price          float64         `json:"price"`
-	ChangePercent  float64         `json:"change_percent"`
-	ChangeAbs      float64         `json:"change_abs"`
-	RegularPrice   float64         `json:"regular_price"`
-	Currency       string          `json:"currency,omitempty"`
-	QuoteType      string          `json:"quote_type,omitempty"`
-	MarketState    string          `json:"market_state,omitempty"`
-	State          SessionState    `json:"session_state"`
-	TradeTime      int64           `json:"trade_time,omitempty"`
-	QuoteSource    string          `json:"quote_source,omitempty"`
-	UpdateMode     string          `json:"update_mode"`
-	Session        string          `json:"session"`
-	Description    string          `json:"description"`
-	RTTMs          float64         `json:"rtt_ms"`
-	ProviderSymbol string          `json:"provider_symbol,omitempty"`
-	Reference      bool            `json:"reference,omitempty"`
-	DelaySeconds   int             `json:"delay_seconds,omitempty"`
-	Capitalization *Capitalization `json:"capitalization,omitempty"`
-	Valuation      *IndexValuation `json:"valuation,omitempty"`
-	QuoteDate      string          `json:"quote_date,omitempty"`
-	ChangeBase     float64         `json:"change_base_price,omitempty"`
-	ChangeBasis    string          `json:"change_basis,omitempty"`
+	Symbol           string          `json:"symbol"`
+	Alias            string          `json:"alias"`
+	Price            float64         `json:"price"`
+	ChangePercent    float64         `json:"change_percent"`
+	ChangeAbs        float64         `json:"change_abs"`
+	RegularPrice     float64         `json:"regular_price"`
+	Currency         string          `json:"currency,omitempty"`
+	QuoteType        string          `json:"quote_type,omitempty"`
+	MarketState      string          `json:"market_state,omitempty"`
+	State            SessionState    `json:"session_state"`
+	TradeTime        int64           `json:"trade_time,omitempty"`
+	RegularTradeTime int64           `json:"regular_trade_time,omitempty"`
+	QuoteSource      string          `json:"quote_source,omitempty"`
+	UpdateMode       string          `json:"update_mode"`
+	Session          string          `json:"session"`
+	Description      string          `json:"description"`
+	RTTMs            float64         `json:"rtt_ms"`
+	ProviderSymbol   string          `json:"provider_symbol,omitempty"`
+	Reference        bool            `json:"reference,omitempty"`
+	DelaySeconds     int             `json:"delay_seconds,omitempty"`
+	Capitalization   *Capitalization `json:"capitalization,omitempty"`
+	Valuation        *IndexValuation `json:"valuation,omitempty"`
+	QuoteDate        string          `json:"quote_date,omitempty"`
+	ChangeBase       float64         `json:"change_base_price,omitempty"`
+	ChangeBasis      string          `json:"change_basis,omitempty"`
 }
 
 func (q Quote) Previous() float64 {
@@ -385,6 +386,9 @@ func ResolveSessionStateForType(marketState, quoteType string, now time.Time, gm
 		}
 		return resolveCommoditySession(now)
 	}
+	if isIndex && raw != "REGULAR" {
+		return StateClosed, "休市 (Closed)"
+	}
 
 	switch raw {
 	case "REGULAR":
@@ -479,18 +483,7 @@ func inferSessionByClock(now time.Time, gmtOffsetSeconds int64) (SessionState, s
 }
 
 func resolveCommoditySession(now time.Time) (SessionState, string) {
-	nyZone := time.FixedZone("EDT", -4*3600)
-	ny := now.In(nyZone)
-	wd := ny.Weekday()
-	mins := ny.Hour()*60 + ny.Minute()
-
-	if wd == time.Saturday || (wd == time.Friday && mins >= 17*60) || (wd == time.Sunday && mins < 18*60) {
-		return StateClosed, "周末休市"
-	}
-	if mins >= 17*60 && mins < 18*60 {
-		return StateClosed, "盘间结算休市"
-	}
-	return StateRegular, "24h 实时交易 (Regular)"
+	return resolveCommodityQuoteSession("GC=F", now, now.Unix())
 }
 
 func resolveCNHKSession(sym string, now time.Time, tradeTime int64) (SessionState, string) {
@@ -504,8 +497,18 @@ func resolveCNHKSession(sym string, now time.Time, tradeTime int64) (SessionStat
 		mins := local.Hour()*60 + local.Minute()
 		switch {
 		case mins >= 9*60+15 && mins < 9*60+30:
+			if !currentCashTick(local, tradeTime, 9*60+15) {
+				return StateClosed, "集合竞价报价未更新；显示最近报价"
+			}
 			return StatePreMarket, "集合竞价 (Pre-Market)"
 		case (mins >= 9*60+30 && mins < 11*60+30) || (mins >= 13*60 && mins < 15*60):
+			start := 9*60 + 30
+			if mins >= 13*60 {
+				start = 13 * 60
+			}
+			if !currentCashTick(local, tradeTime, start) {
+				return StateClosed, "休市或当前时段报价未更新"
+			}
 			if tradeTime > 0 {
 				tLocal := time.Unix(tradeTime, 0).In(cstZone)
 				if tLocal.Year() != local.Year() || tLocal.YearDay() != local.YearDay() {
@@ -531,10 +534,17 @@ func resolveCNHKSession(sym string, now time.Time, tradeTime int64) (SessionStat
 	if sym == "000001.SS" || sym == "399006.SZ" || sym == "399001.SZ" {
 		switch {
 		case mins >= 9*60+15 && mins < 9*60+30:
-			return StatePreMarket, "集合竞价 (Pre-Market)"
-		case (mins >= 9*60+30 && mins <= 11*60+31) || (mins >= 13*60 && mins <= 15*60+1):
+			return StateClosed, "集合竞价时段；指数尚未开盘"
+		case (mins >= 9*60+30 && mins < 11*60+30) || (mins >= 13*60 && mins < 15*60):
+			start := 9*60 + 30
+			if mins >= 13*60 {
+				start = 13 * 60
+			}
+			if !currentCashTick(local, tradeTime, start) {
+				return StateClosed, "指数报价尚未更新"
+			}
 			return StateRegular, "盘中实时 (Regular)"
-		case mins > 11*60+31 && mins < 13*60:
+		case mins >= 11*60+30 && mins < 13*60:
 			return StateClosed, "午间休市 (Lunch Break)"
 		default:
 			return StateClosed, "休市 (Closed)"
@@ -543,10 +553,22 @@ func resolveCNHKSession(sym string, now time.Time, tradeTime int64) (SessionStat
 	// 港股 (^HSI, ^HSTECH)
 	switch {
 	case mins >= 9*60 && mins < 9*60+30:
-		return StatePreMarket, "开市前时段 (Pre-Market)"
-	case (mins >= 9*60+30 && mins <= 12*60+1) || (mins >= 13*60 && mins <= 16*60+10):
+		return StateClosed, "开市前时段；指数尚未开盘"
+	case (mins >= 9*60+30 && mins < 12*60) || (mins >= 13*60 && mins < 16*60):
+		start := 9*60 + 30
+		if mins >= 13*60 {
+			start = 13 * 60
+		}
+		if !currentCashTick(local, tradeTime, start) {
+			return StateClosed, "指数报价尚未更新"
+		}
 		return StateRegular, "盘中实时 (Regular)"
-	case mins > 12*60+1 && mins < 13*60:
+	case mins >= 16*60 && mins < 16*60+10:
+		if !currentCashTick(local, tradeTime, 16*60) {
+			return StateClosed, "收市竞价报价尚未更新"
+		}
+		return StateRegular, "收市竞价窗口（最迟16:10结束）"
+	case mins >= 12*60 && mins < 13*60:
 		return StateClosed, "午间休市 (Lunch Break)"
 	default:
 		return StateClosed, "休市 (Closed)"
@@ -590,12 +612,18 @@ func resolveIndexSession(sym string, now time.Time, tradeTime int64) (SessionSta
 		mins := local.Hour()*60 + local.Minute()
 		switch {
 		case mins >= 8*60+30 && mins < 9*60:
-			return StatePreMarket, "集合竞价 (Pre-Market)"
-		case mins >= 9*60 && mins <= 11*60+31:
+			return StateClosed, "开市前时段；指数尚未开盘"
+		case mins >= 9*60 && mins < 11*60+30:
+			if !currentCashTick(local, tradeTime, 9*60) {
+				return StateClosed, "指数报价尚未更新"
+			}
 			return StateRegular, "前场交易 (Regular)"
-		case mins > 11*60+31 && mins < 12*60+30:
+		case mins >= 11*60+30 && mins < 12*60+30:
 			return StateClosed, "午间休市 (Lunch Break)"
-		case mins >= 12*60+30 && mins <= 15*60+31:
+		case mins >= 12*60+30 && mins < 15*60+30:
+			if !currentCashTick(local, tradeTime, 12*60+30) {
+				return StateClosed, "指数报价尚未更新"
+			}
 			return StateRegular, "后场交易 (Regular)"
 		default:
 			return StateClosed, "休市 (Closed)"
@@ -616,14 +644,15 @@ func resolveIndexSession(sym string, now time.Time, tradeTime int64) (SessionSta
 		mins := local.Hour()*60 + local.Minute()
 		switch {
 		case mins >= 8*60+30 && mins < 9*60:
-			return StatePreMarket, "集合竞价 (Pre-Market)"
-		case mins >= 9*60 && mins <= 15*60+31:
+			return StateClosed, "开市前时段；指数尚未开盘"
+		case mins >= 9*60 && mins < 15*60+30:
 			return StateRegular, "盘中 (Regular)"
 		default:
 			return StateClosed, "休市 (Closed)"
 		}
 	case "^FCHI", "^GDAXI":
-		cetZone := time.FixedZone("CET", 3600)
+		_, londonOffset := now.In(londonZone).Zone()
+		cetZone := time.FixedZone("CET/CEST", londonOffset+3600)
 		local := now.In(cetZone)
 		wd := local.Weekday()
 		if wd == time.Saturday || wd == time.Sunday {
@@ -632,7 +661,7 @@ func resolveIndexSession(sym string, now time.Time, tradeTime int64) (SessionSta
 		mins := local.Hour()*60 + local.Minute()
 		switch {
 		case mins >= 8*60+30 && mins < 9*60:
-			return StatePreMarket, "盘前 (Pre-Market)"
+			return StateClosed, "开市前时段；指数尚未开盘"
 		case mins >= 9*60 && mins <= 17*60+36:
 			return StateRegular, "盘中 (Regular)"
 		default:
@@ -774,7 +803,11 @@ func ParseTencentQuoteBatch(expectedSymbols []string, body []byte, rttMs float64
 				tradeTime = t.Unix()
 			}
 
-			state, session := resolveCommoditySession(now)
+			if tradeTime > now.Add(30*time.Second).Unix() {
+				out[sym] = SymbolResult{Err: "期货报价时间超前"}
+				continue
+			}
+			state, session := resolveCommodityQuoteSession(sym, now, tradeTime)
 			desc := commodityDescriptions[sym]
 			if desc == "" {
 				desc = AliasFor(sym)
@@ -791,10 +824,10 @@ func ParseTencentQuoteBatch(expectedSymbols []string, body []byte, rttMs float64
 				ChangeBasis:   "腾讯期货价格基准",
 				Currency:      "USD",
 				QuoteType:     "FUTURE",
-				MarketState:   "REGULAR",
+				MarketState:   strings.ToUpper(string(state)),
 				State:         state,
 				TradeTime:     tradeTime,
-				QuoteSource:   "Tencent Real Time",
+				QuoteSource:   "Tencent Finance",
 				UpdateMode:    "commodity_realtime",
 				Session:       session,
 				Description:   desc,
@@ -1088,7 +1121,10 @@ func parseYahooQuoteItem(item yahooQuoteItem, rttMs float64, now time.Time) (Quo
 		ChangeBasis:    "Yahoo常规交易前收",
 		ProviderSymbol: "Yahoo:" + item.Symbol,
 	}
-	if !applyYahooNightQuote(&q, item, now) {
+	if item.RegularMarketTime != nil {
+		q.RegularTradeTime = *item.RegularMarketTime
+	}
+	if !applyYahooSessionQuote(&q, item, now) {
 		change, percent, base, err := yahooRegularChanges(regPrice, item.RegularMarketPreviousClose, item.RegularMarketChange, item.RegularMarketChangePercent)
 		if err != nil {
 			return Quote{}, err
@@ -1100,7 +1136,10 @@ func parseYahooQuoteItem(item yahooQuoteItem, rttMs float64, now time.Time) (Quo
 		if item.RegularMarketPreviousClose == nil || !positiveFinite(*item.RegularMarketPreviousClose) {
 			q.ChangeBasis = "Yahoo常规涨跌额对应基准（反推）"
 		}
-		yahooNightFallback(&q, now)
+		yahooSessionFallback(&q, now)
+	}
+	if q.TradeTime > now.Add(30*time.Second).Unix() {
+		return Quote{}, fmt.Errorf("Yahoo报价时间超前")
 	}
 	annotateYahooQuoteDate(&q, gmtSec)
 	if err := ValidateQuote(q); err != nil {
@@ -1186,6 +1225,9 @@ func ParseYahooChart(expectedSymbol string, body []byte, rttMs float64, now time
 		return Quote{}, fmt.Errorf("缺少或重复行情结果")
 	}
 	m := resp.Chart.Result[0].Meta
+	if m.RegularMarketTime > now.Add(30*time.Second).Unix() {
+		return Quote{}, fmt.Errorf("Yahoo图表报价时间超前")
+	}
 	sym := normalizeSymbol(m.Symbol)
 	cur := strings.ToUpper(strings.TrimSpace(m.Currency))
 	inst := strings.ToUpper(strings.TrimSpace(m.InstrumentType))
@@ -1215,29 +1257,30 @@ func ParseYahooChart(expectedSymbol string, body []byte, rttMs float64, now time
 	}
 
 	q := Quote{
-		Symbol:         expectedSymbol,
-		Alias:          quoteAlias(expectedSymbol, desc),
-		Price:          regPrice,
-		ChangePercent:  changePct,
-		ChangeAbs:      changeAbs,
-		RegularPrice:   regPrice,
-		Currency:       cur,
-		QuoteType:      inst,
-		MarketState:    strings.ToUpper(strings.TrimSpace(m.MarketState)),
-		State:          state,
-		TradeTime:      m.RegularMarketTime,
-		QuoteSource:    "Yahoo Chart Fallback",
-		UpdateMode:     "yahoo_regular",
-		Session:        session + "；显示Yahoo常规主报价",
-		Description:    desc,
-		RTTMs:          rttMs,
-		ChangeBase:     base,
-		ChangeBasis:    "Yahoo常规交易前收",
-		ProviderSymbol: "Yahoo:" + expectedSymbol,
+		Symbol:           expectedSymbol,
+		Alias:            quoteAlias(expectedSymbol, desc),
+		Price:            regPrice,
+		ChangePercent:    changePct,
+		ChangeAbs:        changeAbs,
+		RegularPrice:     regPrice,
+		Currency:         cur,
+		QuoteType:        inst,
+		MarketState:      strings.ToUpper(strings.TrimSpace(m.MarketState)),
+		State:            state,
+		TradeTime:        m.RegularMarketTime,
+		RegularTradeTime: m.RegularMarketTime,
+		QuoteSource:      "Yahoo Chart Fallback",
+		UpdateMode:       "yahoo_regular",
+		Session:          session + "；显示Yahoo常规主报价",
+		Description:      desc,
+		RTTMs:            rttMs,
+		ChangeBase:       base,
+		ChangeBasis:      "Yahoo常规交易前收",
+		ProviderSymbol:   "Yahoo:" + expectedSymbol,
 	}
 	// The chart endpoint has no verifiable overnight timestamp. Its full-day
 	// price must not masquerade as an overnight session quote.
-	yahooNightFallback(&q, now)
+	yahooSessionFallback(&q, now)
 	annotateYahooQuoteDate(&q, m.GMTOffset)
 	if err := ValidateQuote(q); err != nil {
 		return Quote{}, err
@@ -1283,10 +1326,7 @@ func (v View) EffectiveState() SessionState {
 }
 
 func (v View) Tooltip() string {
-	status := "实时数据正常"
-	if isTrackedSZETF(v.Symbol) || watchlist.IsMainlandETF(v.Symbol) || isGlobalIndex(v.Symbol) {
-		status = "行情数据正常"
-	}
+	status := "行情数据正常"
 	if v.Quote != nil {
 		if tag := v.Quote.FeedTag(time.Now()); tag != "" {
 			status += "（" + tag + "）"
@@ -1502,6 +1542,11 @@ func (t *Tracker) Views(now time.Time, intervalSeconds int) []View {
 		if st.quote != nil {
 			c := *st.quote
 			qCopy = &c
+			if yahooCachedSessionExpired(c, now) {
+				qCopy.State, state = StateClosed, StateClosed
+				qCopy.Session += "；交易时段已切换，等待当前时段行情"
+				healthy, reason = false, "交易时段已切换，等待当前时段行情"
+			}
 		}
 		out = append(out, View{
 			Symbol:      sym,

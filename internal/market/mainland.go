@@ -2,6 +2,11 @@ package market
 
 import "time"
 
+func currentCashTick(local time.Time, tradeTime int64, auctionStart int) bool {
+	trade := time.Unix(tradeTime, 0).In(local.Location())
+	return tradeTime > 0 && tradeTime <= local.Add(30*time.Second).Unix() && trade.Year() == local.Year() && trade.YearDay() == local.YearDay() && trade.Hour()*60+trade.Minute() >= auctionStart
+}
+
 func resolveMainlandSession(now time.Time, tradeTime int64) (SessionState, string) {
 	zone := time.FixedZone("CST", 8*3600)
 	local := now.In(zone)
@@ -11,11 +16,17 @@ func resolveMainlandSession(now time.Time, tradeTime int64) (SessionState, strin
 	m := local.Hour()*60 + local.Minute()
 	switch {
 	case m >= 9*60+15 && m < 9*60+30:
+		if !currentCashTick(local, tradeTime, 9*60+15) {
+			return StateClosed, "集合竞价报价未更新；显示最近报价"
+		}
 		return StatePreMarket, "集合竞价 (Pre-Market)"
 	case (m >= 9*60+30 && m < 11*60+30) || (m >= 13*60 && m < 15*60):
-		trade := time.Unix(tradeTime, 0).In(zone)
-		if tradeTime > 0 && (trade.Year() != local.Year() || trade.YearDay() != local.YearDay()) {
-			return StateClosed, "休市或行情日期未更新"
+		start := 9*60 + 30
+		if m >= 13*60 {
+			start = 13 * 60
+		}
+		if !currentCashTick(local, tradeTime, start) {
+			return StateClosed, "休市或当前时段报价未更新"
 		}
 		return StateRegular, "盘中 (Regular)"
 	case m >= 11*60+30 && m < 13*60:

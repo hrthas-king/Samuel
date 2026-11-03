@@ -103,7 +103,7 @@ func TestYahooNightRejectsMissingStaleFutureOrMismatchedTuples(t *testing.T) {
 	}
 }
 
-func TestYahooNightSelectionOnlyAppliesToVOOQQQDuringNight(t *testing.T) {
+func TestYahooNightSelectionSupportsAllUSAssetsAndRejectsStaleSessions(t *testing.T) {
 	night := time.Date(2026, 11, 3, 6, 0, 0, 0, time.UTC)
 	for _, raw := range []string{"OVERNIGHT", "PREPRE", "POSTPOST"} {
 		t.Run(raw, func(t *testing.T) {
@@ -118,10 +118,10 @@ func TestYahooNightSelectionOnlyAppliesToVOOQQQDuringNight(t *testing.T) {
 		name, symbol, raw, at string
 		state                 SessionState
 	}{
-		{"premarket", "VOO", "PRE", "2026-11-03T12:00:00Z", StatePreMarket},
-		{"regular", "QQQ", "REGULAR", "2026-11-03T17:00:00Z", StateRegular},
-		{"postmarket", "VOO", "POST", "2026-11-03T23:00:00Z", StatePostMarket},
-		{"expired_night_flag", "QQQ", "OVERNIGHT", "2026-11-03T09:00:00Z", StatePreMarket},
+		{"premarket", "VOO", "PRE", "2026-11-03T12:00:00Z", StateClosed},
+		{"regular", "QQQ", "REGULAR", "2026-11-03T17:00:00Z", StateClosed},
+		{"postmarket", "VOO", "POST", "2026-11-03T23:00:00Z", StateClosed},
+		{"expired_night_flag", "QQQ", "OVERNIGHT", "2026-11-03T09:00:00Z", StateClosed},
 		{"weekend", "VOO", "OVERNIGHT", "2026-11-07T06:00:00Z", StateClosed},
 		{"other_etf", "SOXX", "OVERNIGHT", "2026-11-03T06:00:00Z", StateOvernight},
 		{"stock", "NVDA", "OVERNIGHT", "2026-11-03T06:00:00Z", StateOvernight},
@@ -135,8 +135,12 @@ func TestYahooNightSelectionOnlyAppliesToVOOQQQDuringNight(t *testing.T) {
 			body := nightFixture(tc.symbol, night, map[string]any{"marketState": tc.raw, "quoteType": kind, "gmtOffSetMilliseconds": -18000000})
 			batch, err := ParseYahooQuoteBatchForSymbols([]string{tc.symbol}, body, 1, at)
 			q := batch[tc.symbol].Quote
-			if err != nil || q == nil || q.Price != 110 || q.ChangePercent != 10 || q.UpdateMode != "yahoo_regular" || q.State != tc.state {
-				t.Fatalf("regular headline policy changed outside requested night pair: %v %+v", err, q)
+			price, percent, mode := 110.0, 10.0, "yahoo_regular"
+			if tc.state == StateOvernight {
+				price, percent, mode = 108, -1.818181818, "yahoo_overnight"
+			}
+			if err != nil || q == nil || q.Price != price || q.ChangePercent != percent || q.UpdateMode != mode || q.State != tc.state {
+				t.Fatalf("wrong price or status for the available session: %v %+v", err, q)
 			}
 		})
 	}
