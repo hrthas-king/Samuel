@@ -90,7 +90,7 @@ func TestYahooNightRejectsMissingStaleFutureOrMismatchedTuples(t *testing.T) {
 		{"before_night_open", map[string]any{"overnightMarketTime": time.Date(2026, 11, 3, 0, 59, 59, 0, time.UTC).Unix()}},
 		{"future_tick", map[string]any{"overnightMarketTime": now.Add(time.Minute).Unix()}},
 		{"newer_regular_close", map[string]any{"regularMarketTime": now.Unix()}},
-		{"full_day_delta", map[string]any{"overnightMarketChange": 8, "overnightMarketChangePercent": 8}},
+		{"inconsistent_delta", map[string]any{"overnightMarketChange": 8}},
 		{"wrong_percent_base", map[string]any{"overnightMarketChangePercent": -2}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

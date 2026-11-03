@@ -70,6 +70,22 @@ func TestLiveYahooUSSessions(t *testing.T) {
 			if q == nil {
 				t.Fatal(batch[item.Symbol].Err)
 			}
+			if yahooUSAsset(*q) && q.UpdateMode == "yahoo_regular" {
+				w := yahooUSWindow(now, item.MarketState, q.RegularTradeTime)
+				var p, c, pc *float64
+				var at *int64
+				switch w.state {
+				case StatePreMarket:
+					p, c, pc, at = item.PreMarketPrice, item.PreMarketChange, item.PreMarketChangePercent, item.PreMarketTime
+				case StatePostMarket:
+					p, c, pc, at = item.PostMarketPrice, item.PostMarketChange, item.PostMarketChangePercent, item.PostMarketTime
+				case StateOvernight:
+					p, c, pc, at = item.OvernightMarketPrice, item.OvernightMarketChange, item.OvernightMarketChangePercent, item.OvernightMarketTime
+				}
+				if p != nil && c != nil && pc != nil && at != nil && *p > 0 && *p-*c > 0 && q.RegularTradeTime > 0 && *at > q.RegularTradeTime && w.contains(*at, now) && math.Abs(*c/(*p-*c)*100-*pc) < .05 {
+					t.Fatal("a complete coherent current-session tuple was discarded")
+				}
+			}
 			t.Logf("displayed: price=%.5f percent=%+.7f base=%.5f time=%d mode=%s state=%s", q.Price, q.ChangePercent, q.Previous(), q.TradeTime, q.UpdateMode, q.State)
 			var price, change, percent *float64
 			var stamp *int64

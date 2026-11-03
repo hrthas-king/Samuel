@@ -82,9 +82,16 @@ func applyYahooSessionQuote(q *Quote, item yahooQuoteItem, now time.Time) bool {
 	}
 	candidate := *q
 	candidate.Price, candidate.ChangeAbs, candidate.ChangePercent = *price, *change, *percent
-	candidate.TradeTime, candidate.ChangeBase = *stamp, q.RegularPrice
+	candidate.TradeTime, candidate.ChangeBase = *stamp, *price-*change
 	candidate.State, candidate.UpdateMode = w.state, w.mode
-	candidate.ChangeBasis = "Yahoo最近常规收盘（" + w.label + "涨跌基准）"
+	candidate.ChangeBasis = "Yahoo" + w.label + "价与涨跌额对应基准"
+	// The headline close can update independently of Yahoo's session tuple.
+	// Snap only floating-point noise; a different coherent session reference
+	// must not discard the price/change values shown by Yahoo's current line.
+	if isClose(candidate.ChangeBase, q.RegularPrice, 1e-7, 1e-4) {
+		candidate.ChangeBase = q.RegularPrice
+		candidate.ChangeBasis = "Yahoo最近常规收盘（" + w.label + "涨跌基准）"
+	}
 	candidate.Session = w.label + "；显示Yahoo" + w.label + "报价"
 	if err := ValidateQuote(candidate); err != nil {
 		return false
