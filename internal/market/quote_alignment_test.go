@@ -67,7 +67,7 @@ func TestMarketSourcePinningForAllBuiltinGroupsAndNoCrossSourceFallback(t *testi
 
 func TestQuoteBasisIsVisibleAndNotAnInferredDifferentSession(t *testing.T) {
 	body := []byte(`{"quoteResponse":{"result":[{"symbol":"NVDA","currency":"USD","quoteType":"EQUITY","marketState":"PRE","regularMarketPrice":204.64,"regularMarketPreviousClose":213.66,"regularMarketChange":-9.02,"regularMarketChangePercent":-4.22166}]}}`)
-	batch, err := ParseYahooQuoteBatchForSymbols([]string{"NVDA"}, body, 10, time.Now())
+	batch, err := ParseYahooQuoteBatchForSymbols([]string{"NVDA"}, body, 10, time.Date(2026, 11, 2, 14, 20, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}

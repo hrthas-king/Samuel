@@ -15,6 +15,7 @@ import (
 
 	"github.com/hrthas-king/Samuel/internal/app"
 	"github.com/hrthas-king/Samuel/internal/config"
+	"github.com/hrthas-king/Samuel/internal/locale"
 	"github.com/hrthas-king/Samuel/internal/market"
 	"github.com/hrthas-king/Samuel/internal/monitor"
 	"github.com/hrthas-king/Samuel/internal/winapi"
@@ -53,6 +54,8 @@ const (
 	ActionExit
 	ActionTrayIconApplication
 	ActionTrayIconNetwork
+	ActionLanguageChinese
+	ActionLanguageEnglish
 )
 
 func GroupForAction(act Action) (string, bool) {
@@ -263,6 +266,7 @@ type UI struct {
 	trayAdded      bool
 	taskbarMessage uint32
 	latest         atomic.Pointer[app.Snapshot]
+	language       atomic.Value
 	desiredGroup   atomic.Value
 	updatePending  atomic.Bool
 	startup        atomic.Bool
@@ -309,6 +313,8 @@ func NewUI(version string, cfg config.Config) *UI {
 		validatePair:  market.ValidateCustomPair,
 	}
 	u.desiredGroup.Store(cfg.MarketGroup)
+	u.cfg.Language = locale.Normalize(cfg.Language)
+	u.language.Store(u.cfg.Language)
 	return u
 }
 
@@ -464,7 +470,7 @@ func (u *UI) showTooltip() {
 	if s == nil {
 		return
 	}
-	copyText(u.tooltipBuf[:], OverlayTooltip(*s))
+	copyText(u.tooltipBuf[:], OverlayTooltipLanguage(*s, u.Language()))
 	sendMessage.Call(u.tooltipHwnd, 0x439, 0, uintptr(unsafe.Pointer(&u.tool))) // TTM_UPDATETIPTEXTW
 	var pt point
 	getCursor.Call(uintptr(unsafe.Pointer(&pt)))
@@ -506,7 +512,7 @@ func (u *UI) update(s app.Snapshot) error {
 		return err
 	}
 	u.data.Icon = icon
-	copyText(u.data.Tip[:], TrayTooltip(s))
+	copyText(u.data.Tip[:], TrayTooltipLanguage(s, u.Language()))
 	if u.trayAdded {
 		if !u.callNotify(1) {
 			u.addTrayIcon()
@@ -802,7 +808,7 @@ func (u *UI) drawBar(dc, hwnd uintptr) {
 		}
 
 		nameLeft := curX
-		curX = u.drawFlowTextRow(dc, v.DisplayName(), curX, colorRef(240, 240, 240), 0, rowBottom) + u.px(5)
+		curX = u.drawFlowTextRow(dc, quoteName(u.Language(), v), curX, colorRef(240, 240, 240), 0, rowBottom) + u.px(5)
 
 		text := "---.-- --.--%"
 		pctColor := colorRef(170, 170, 170)
@@ -820,7 +826,7 @@ func (u *UI) drawBar(dc, hwnd uintptr) {
 		curX = u.drawFlowTextRow(dc, text, curX, pctColor, 0, rowBottom)
 		if v.Quote != nil && v.Quote.HasSecondaryLine() {
 			prior, _, _ := selectObject.Call(dc, u.capFont)
-			capRight := u.drawFlowTextRow(dc, v.Quote.SecondaryText(), nameLeft, colorRef(175, 185, 198), rowBottom, u.height)
+			capRight := u.drawFlowTextRow(dc, u.tr(v.Quote.SecondaryText()), nameLeft, colorRef(175, 185, 198), rowBottom, u.height)
 			selectObject.Call(dc, prior)
 			curX = max(curX, capRight)
 		}
@@ -868,8 +874,8 @@ func (u *UI) showDiagnostics() {
 	if p := u.latest.Load(); p != nil {
 		snap = *p
 	}
-	report := DiagnosticsText(u.version, snap)
-	text, title := winapi.UTF16(report), winapi.UTF16("Samuel — 网络与多市场行情诊断")
+	report := DiagnosticsTextLanguage(u.version, snap, u.Language())
+	text, title := winapi.UTF16(report), winapi.UTF16(u.tr("Samuel — 网络与多市场行情诊断"))
 	messageBox.Call(u.hwnd, uintptr(unsafe.Pointer(text)), uintptr(unsafe.Pointer(title)), 0x40)
 }
 
@@ -881,7 +887,7 @@ func (u *UI) buildMenu() (uintptr, map[Action]customMenuCommand) {
 	}
 
 	add := func(id Action, label string, flags uintptr) {
-		p := winapi.UTF16(strings.ReplaceAll(label, "&", "&&"))
+		p := winapi.UTF16(strings.ReplaceAll(u.tr(label), "&", "&&"))
 		appendMenu.Call(menu, flags, uintptr(id), uintptr(unsafe.Pointer(p)))
 	}
 
@@ -898,7 +904,7 @@ func (u *UI) buildMenu() (uintptr, map[Action]customMenuCommand) {
 			up, down = Speed(s.Rates.Up), Speed(s.Rates.Down)
 		}
 		add(0, fmt.Sprintf("网络: ↑ %s  ↓ %s | HTTPS: %s", up, down, RTT(*s)), 2)
-		add(0, "行情: "+QuoteSummary(*s), 2)
+		add(0, "行情: "+QuoteSummaryLanguage(*s, u.Language()), 2)
 		if s.EgressActive {
 			add(0, "TUN/代理活跃：地区每 30 秒自动复核", 2)
 		}
@@ -929,10 +935,10 @@ func (u *UI) buildMenu() (uintptr, map[Action]customMenuCommand) {
 					styleName = "网络状态"
 				}
 			}
-			label := winapi.UTF16(option.label)
+			label := winapi.UTF16(u.tr(option.label))
 			appendMenu.Call(iconMenu, flags, uintptr(option.action), uintptr(unsafe.Pointer(label)))
 		}
-		title := winapi.UTF16("托盘图标（当前：" + styleName + "）")
+		title := winapi.UTF16(u.tr("托盘图标（当前：" + styleName + "）"))
 		appendMenu.Call(menu, 0x10, iconMenu, uintptr(unsafe.Pointer(title)))
 	}
 
@@ -948,6 +954,7 @@ func (u *UI) buildMenu() (uintptr, map[Action]customMenuCommand) {
 		colorLabel = "涨跌配色：红涨绿跌"
 	}
 	add(ActionToggleColor, colorLabel, 0)
+	u.appendLanguageMenu(menu)
 
 	add(0, "", 0x800)
 	currentGroup := u.cfg.MarketGroup
@@ -983,7 +990,7 @@ func (u *UI) buildMenu() (uintptr, map[Action]customMenuCommand) {
 			appendMenu.Call(moreMenu, 0, uintptr(uint32(ActionGroupVOOQQQ)+uint32(i)), uintptr(unsafe.Pointer(p)))
 		}
 		u.appendCustomMenu(moreMenu, customCommands)
-		moreTitle := winapi.UTF16("More（更多行情）")
+		moreTitle := winapi.UTF16(u.tr("More（更多行情）"))
 		appendMenu.Call(menu, 0x10, moreMenu, uintptr(unsafe.Pointer(moreTitle)))
 	}
 
@@ -1004,10 +1011,10 @@ func (u *UI) buildMenu() (uintptr, map[Action]customMenuCommand) {
 			if label == "" {
 				label = fmt.Sprintf("%d%%", pct)
 			}
-			p := winapi.UTF16(label)
+			p := winapi.UTF16(u.tr(label))
 			appendMenu.Call(scaleMenu, flags, uintptr(uint32(ActionScale75)+uint32(i)), uintptr(unsafe.Pointer(p)))
 		}
-		scaleTitle := winapi.UTF16(fmt.Sprintf("显示大小 (当前: %d%%)", scalePct))
+		scaleTitle := winapi.UTF16(u.tr(fmt.Sprintf("显示大小 (当前: %d%%)", scalePct)))
 		appendMenu.Call(menu, 0x10, scaleMenu, uintptr(unsafe.Pointer(scaleTitle)))
 	}
 
@@ -1022,10 +1029,10 @@ func (u *UI) buildMenu() (uintptr, map[Action]customMenuCommand) {
 			if interval == n {
 				flags = 8
 			}
-			p := winapi.UTF16(fmt.Sprintf("%d 秒", n))
+			p := winapi.UTF16(u.tr(fmt.Sprintf("%d 秒", n)))
 			appendMenu.Call(intervalMenu, flags, uintptr(uint32(ActionInterval1)+uint32(i)), uintptr(unsafe.Pointer(p)))
 		}
-		intTitle := winapi.UTF16(fmt.Sprintf("刷新间隔（当前 %d 秒）", interval))
+		intTitle := winapi.UTF16(u.tr(fmt.Sprintf("刷新间隔（当前 %d 秒）", interval)))
 		appendMenu.Call(menu, 0x10, intervalMenu, uintptr(unsafe.Pointer(intTitle)))
 	}
 	add(0, "", 0x800)
@@ -1075,7 +1082,7 @@ func (u *UI) handleMenuSelection(cmd uintptr, customCommands map[Action]customMe
 				err = u.selectCustomPair(command.id)
 			}
 			if err != nil {
-				ShowError(err)
+				u.showError(err)
 			}
 		} else {
 			u.handleAction(Action(cmd))
@@ -1085,13 +1092,21 @@ func (u *UI) handleMenuSelection(cmd uintptr, customCommands map[Action]customMe
 
 func (u *UI) handleAction(act Action) {
 	switch act {
+	case ActionLanguageChinese, ActionLanguageEnglish:
+		language := locale.Chinese
+		if act == ActionLanguageEnglish {
+			language = locale.English
+		}
+		if err := u.setLanguage(language); err != nil {
+			u.showError(err)
+		}
 	case ActionTrayIconApplication, ActionTrayIconNetwork:
 		style := config.TrayIconApplication
 		if act == ActionTrayIconNetwork {
 			style = config.TrayIconNetwork
 		}
 		if err := u.setTrayIcon(style); err != nil {
-			ShowError(err)
+			u.showError(err)
 		}
 	case ActionToggleNetDetail:
 		u.cfg.ShowNetDetail = !u.cfg.ShowNetDetail

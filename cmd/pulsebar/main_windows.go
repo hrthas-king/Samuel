@@ -81,7 +81,7 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		if *diagnose == 0 && *runFor == 0 && !*probe {
-			ui.ShowError(err)
+			ui.ShowErrorLanguage(err, config.Load().Language)
 		}
 		os.Exit(1)
 	}
@@ -208,7 +208,7 @@ func run(diagnose, runFor time.Duration, output string, probe, dockLeft, showDia
 								err = startup.Set(!enabled)
 							}
 							if err != nil {
-								ui.ShowError(err)
+								ui.ShowErrorLanguage(err, barUI.Language())
 							} else {
 								barUI.SetAutostart(!enabled)
 							}
@@ -232,7 +232,7 @@ func run(diagnose, runFor time.Duration, output string, probe, dockLeft, showDia
 
 	if probe && output == "" {
 		if s := latest.Load(); s != nil {
-			fmt.Print(ui.DiagnosticsText(version, *s))
+			fmt.Print(ui.DiagnosticsTextLanguage(version, *s, settings.Language))
 		}
 		return nil
 	}

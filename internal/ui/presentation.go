@@ -10,6 +10,7 @@ import (
 
 	"github.com/hrthas-king/Samuel/internal/app"
 	"github.com/hrthas-king/Samuel/internal/ipinfo"
+	"github.com/hrthas-king/Samuel/internal/locale"
 	"github.com/hrthas-king/Samuel/internal/market"
 	"github.com/hrthas-king/Samuel/internal/monitor"
 )
@@ -120,9 +121,13 @@ func QuoteSummary(s app.Snapshot) string {
 
 // TrayTooltip 生成系统托盘悬停文字（控制在 Windows 128 UTF-16 字符上限内）。
 func TrayTooltip(s app.Snapshot) string {
+	return TrayTooltipLanguage(s, locale.Chinese)
+}
+
+func TrayTooltipLanguage(s app.Snapshot, language string) string {
 	ip := s.Geo.IP
 	if ip == "" {
-		ip = "未知"
+		ip = locale.Text(language, "未知")
 	}
 	if s.GeoError != "" || s.Status == monitor.Offline {
 		ip += "*"
@@ -131,8 +136,8 @@ func TrayTooltip(s app.Snapshot) string {
 	if s.Rates.Valid {
 		up, down = CompactSpeed(s.Rates.Up), CompactSpeed(s.Rates.Down)
 	}
-	prefix := fmt.Sprintf("Samuel [%s] %s\nIP: ", Country(s), StatusText(s.Status))
-	suffix := fmt.Sprintf(" | HTTPS: %s\n↑%s ↓%s\n%s", CompactRTT(s), up, down, QuoteSummary(s))
+	prefix := fmt.Sprintf("Samuel [%s] %s\nIP: ", Country(s), locale.Text(language, StatusText(s.Status)))
+	suffix := fmt.Sprintf(" | HTTPS: %s\n↑%s ↓%s\n%s", CompactRTT(s), up, down, QuoteSummaryLanguage(s, language))
 	tip := prefix + ip + suffix
 	if len(utf16.Encode([]rune(tip))) <= 127 {
 		return tip
@@ -144,6 +149,7 @@ func TrayTooltip(s app.Snapshot) string {
 	if strings.HasSuffix(ip, "*") {
 		hint = "…*(见诊断)"
 	}
+	hint = locale.Text(language, hint)
 	budget := 127 - len(utf16.Encode([]rune(prefix+hint+suffix)))
 	if budget < 0 {
 		budget = 0

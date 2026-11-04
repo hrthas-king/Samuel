@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/hrthas-king/Samuel/internal/locale"
 	"github.com/hrthas-king/Samuel/internal/watchlist"
 )
 
@@ -34,6 +35,7 @@ var validMarketGroups = map[string]bool{
 }
 
 type Config struct {
+	Language        string           `json:"language,omitempty"`
 	CustomPairs     []watchlist.Pair `json:"custom_pairs,omitempty"`
 	IntervalSeconds int              `json:"interval_seconds"`
 	ShowNetDetail   bool             `json:"show_net_detail"`
@@ -70,6 +72,7 @@ func ValidUIScalePercent(pct int) bool {
 
 func Default() Config {
 	return Config{
+		Language:        locale.Chinese,
 		IntervalSeconds: 2,
 		ShowNetDetail:   false,
 		Locked:          false,
@@ -110,6 +113,7 @@ func LoadFrom(path string) Config {
 	if json.Unmarshal(data, &saved) != nil {
 		return c
 	}
+	c.Language = locale.Normalize(saved.Language)
 	seen := make(map[string]bool)
 	for _, pair := range saved.CustomPairs {
 		p, err := watchlist.NewPair(pair.Code1, pair.Code2)
@@ -152,6 +156,12 @@ func Save(c Config) error {
 }
 
 func SaveTo(path string, c Config) error {
+	if c.Language == "" {
+		c.Language = locale.Chinese
+	}
+	if !locale.Valid(c.Language) {
+		return fmt.Errorf("无效的界面语言: %s", c.Language)
+	}
 	if !ValidInterval(c.IntervalSeconds) {
 		return fmt.Errorf("刷新间隔只能为 1、2、5 秒")
 	}

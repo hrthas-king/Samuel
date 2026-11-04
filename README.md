@@ -61,6 +61,10 @@ Samuel 原名 PulseBar，将网络感知与双标的行情显示组合在一条�
 
 右键菜单提供刷新、锁定位置、恢复到任务栏左侧、涨跌配色、行情组合、显示大小、刷新间隔、诊断、自启和退出。解锁后可拖动悬浮条；锁定后悬浮条支持鼠标穿透，可继续从托盘打开菜单。显示大小支持 75%、85%、90%、100%、115% 和 130%，显示刷新间隔可选 1、2 或 5 秒。
 
+**中英文界面：**在右键菜单打开 **语言 / Language**，选择 **简体中文** 或 **English**，菜单、组合说明、行情条内置简称、悬停提示、诊断和自定义输入面板立即更新，无需重启。选择保存到本机配置，重启后继续使用；旧配置默认简体中文。公司/网卡原名等外部名称保留原样，代码、价格、百分比和行情口径不随语言改变。
+
+<img src="assets/fluent-english-menu-dark.png" alt="Samuel 英文菜单原生布局示例" width="500"> <img src="assets/fluent-english-input-dark.png" alt="Samuel 英文自定义输入面板原生布局示例" width="520">
+
 **托盘图标可选：**在右键菜单打开 **托盘图标**，可选择 **Samuel 应用图标**（默认，霓虹 S 图案）或 **网络状态图标（地区 / 上下行）**。选择立即生效并自动保存，重启后保持；两种图标都可悬停查看网络与行情、右键打开菜单。透明行情条的显示独立于这一选项。
 
 菜单与自定义组合面板支持系统深浅色、键盘操作和高 DPI；菜单长列表可用滚轮或方向键浏览。系统启用高对比度或报告屏幕阅读器开启时，菜单回退至 Windows 原生菜单。
@@ -146,13 +150,13 @@ Samuel 原名 PulseBar，将网络感知与双标的行情显示组合在一条�
 git clone https://github.com/hrthas-king/Samuel.git
 cd Samuel
 ./scripts/verify.ps1
-./scripts/build.ps1 -Arch amd64 -Version v1.0.14
+./scripts/build.ps1 -Arch amd64 -Version v1.0.15
 ```
 
 构建脚本输出 `dist/Samuel-windows-amd64.exe`；ARM 设备可将 `-Arch amd64` 改为 `-Arch arm64`。`verify.ps1` 包含自动测试、静态检查、格式检查与双架构构建。也可以创建包含文档的发布压缩包：
 
 ```powershell
-./scripts/package.ps1 -Version v1.0.14
+./scripts/package.ps1 -Version v1.0.15
 ```
 
 常用命令（在可执行文件所在目录运行）：

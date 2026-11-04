@@ -473,17 +473,20 @@ func fluentIcon(e fluentEntry) string {
 	if strings.HasPrefix(e.label, "More") {
 		return "\ue80a"
 	}
-	if strings.HasPrefix(e.label, "显示大小") {
+	if strings.HasPrefix(e.label, "显示大小") || strings.HasPrefix(e.label, "Display size") {
 		return "\ue8a7"
 	}
-	if strings.HasPrefix(e.label, "托盘图标") {
+	if strings.HasPrefix(e.label, "托盘图标") || strings.HasPrefix(e.label, "Tray icon") {
 		return "\ue91b"
 	}
-	if strings.Contains(e.label, "间隔") {
+	if strings.Contains(e.label, "间隔") || strings.HasPrefix(e.label, "Refresh interval") {
 		return "\ue823"
 	}
-	if strings.HasPrefix(e.label, "其他") {
+	if strings.HasPrefix(e.label, "其他") || strings.HasPrefix(e.label, "Other") {
 		return "\ue713"
+	}
+	if strings.HasPrefix(e.label, "语言") || strings.HasPrefix(e.label, "Language") {
+		return "\ue775"
 	}
 	return ""
 }

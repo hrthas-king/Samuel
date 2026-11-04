@@ -36,7 +36,7 @@ func (u *UI) appendCustomMenu(parent uintptr, commands map[Action]customMenuComm
 		return
 	}
 	appendItem := func(m uintptr, id Action, label string, flags uintptr) {
-		p := winapi.UTF16(strings.ReplaceAll(label, "&", "&&"))
+		p := winapi.UTF16(strings.ReplaceAll(u.tr(label), "&", "&&"))
 		appendMenu.Call(m, flags, uintptr(id), uintptr(unsafe.Pointer(p)))
 	}
 	appendItem(menu, actionAddCustom, "+ 新增组合", 0)
@@ -58,7 +58,7 @@ func (u *UI) appendCustomMenu(parent uintptr, commands map[Action]customMenuComm
 			appendItem(menu, Action(0x10001+i*2), "删除该组合", 0)
 		}
 	}
-	p := winapi.UTF16("其他（自定义股票 / ETF）")
+	p := winapi.UTF16(u.tr("其他（自定义股票 / ETF）"))
 	appendMenu.Call(parent, 0x10, menu, uintptr(unsafe.Pointer(p)))
 }
 

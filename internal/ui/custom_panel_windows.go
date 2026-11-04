@@ -51,7 +51,7 @@ func panelText(hwnd uintptr) string {
 }
 func (p *customPanel) setStatus(text string) {
 	p.statusError = !p.busy
-	s := winapi.UTF16(text)
+	s := winapi.UTF16(p.u.tr(text))
 	setWindowText.Call(p.status, uintptr(unsafe.Pointer(s)))
 	invalidateRect.Call(p.status, 0, 1)
 }
@@ -82,7 +82,7 @@ func (u *UI) openCustomPanel(show bool) {
 	cursor, _, _ := loadCursor.Call(0, 32512)
 	wc.Cursor = cursor
 	if atom, _, err := registerClass.Call(uintptr(unsafe.Pointer(&wc))); atom == 0 && err != syscall.Errno(1410) {
-		ShowError(winapi.Error("RegisterClassExW", err))
+		u.showError(winapi.Error("RegisterClassExW", err))
 		return
 	}
 	var pos point
@@ -122,18 +122,18 @@ func (u *UI) openCustomPanel(show bool) {
 			y = info.Work.Top
 		}
 	}
-	title := winapi.UTF16("新增自定义股票 / ETF组合")
+	title := winapi.UTF16(u.tr("新增自定义股票 / ETF组合"))
 	hwnd, _, err := createWindow.Call(0x8|0x80, uintptr(unsafe.Pointer(cls)), uintptr(unsafe.Pointer(title)), 0x80000000|0x02000000, uintptr(x), uintptr(y), uintptr(w), uintptr(h), u.hwnd, 0, instance, 0) // WS_POPUP | WS_CLIPCHILDREN
 	if hwnd == 0 {
 		v.close()
-		ShowError(winapi.Error("CreateWindowExW", err))
+		u.showError(winapi.Error("CreateWindowExW", err))
 		return
 	}
 	p := &customPanel{u: u, hwnd: hwnd, visual: v}
 	u.customPanel = p
 	panelWindows.Store(hwnd, p)
 	child := func(class, text string, style uintptr, id uintptr, l, t, width, height int) uintptr {
-		c, s := winapi.UTF16(class), winapi.UTF16(text)
+		c, s := winapi.UTF16(class), winapi.UTF16(u.tr(text))
 		control, _, _ := createWindow.Call(0, uintptr(unsafe.Pointer(c)), uintptr(unsafe.Pointer(s)), 0x40000000|0x10000000|style, uintptr(v.px(l)), uintptr(v.px(t)), uintptr(v.px(width)), uintptr(v.px(height)), hwnd, id, instance, 0)
 		if control != 0 {
 			p.controls = append(p.controls, control)
@@ -161,12 +161,12 @@ func (u *UI) openCustomPanel(show bool) {
 	p.submit = child("BUTTON", "添加并显示", 0x10000|0xb, 3, 372, 313, 122, 41)
 	if p.first == 0 || p.second == 0 || p.submit == 0 || p.status == 0 || p.cancel == 0 {
 		u.closeCustomPanel()
-		ShowError(fmt.Errorf("无法创建输入控件"))
+		u.showError(fmt.Errorf("无法创建输入控件"))
 		return
 	}
 	for _, edit := range []uintptr{p.first, p.second} {
 		sendMessage.Call(edit, 0xc5, 10, 0) // EM_SETLIMITTEXT: also allow US share classes.
-		cue := winapi.UTF16("6位数字或美股代码，如 AAPL")
+		cue := winapi.UTF16(u.tr("6位数字或美股代码，如 AAPL"))
 		sendMessage.Call(edit, 0x1501, 0, uintptr(unsafe.Pointer(cue)))
 	}
 	for _, control := range []uintptr{p.first, p.second, p.cancel, p.submit} {

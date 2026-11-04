@@ -100,7 +100,7 @@ func (u *UI) menuGroup(id string) market.GroupSpec {
 
 func (u *UI) groupMenuLabel(group market.GroupSpec) string {
 	cells := u.groupPercents(group.ID, time.Now())
-	return group.MenuLabel + "\t" + cells[0].text + " / " + cells[1].text
+	return groupLabel(u.Language(), group) + "\t" + cells[0].text + " / " + cells[1].text
 }
 
 func (u *UI) menuPercentColor(cell menuPercent, palette fluentPalette) uintptr {
