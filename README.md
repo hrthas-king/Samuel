@@ -150,13 +150,13 @@ Samuel 原名 PulseBar，将网络感知与双标的行情显示组合在一条�
 git clone https://github.com/hrthas-king/Samuel.git
 cd Samuel
 ./scripts/verify.ps1
-./scripts/build.ps1 -Arch amd64 -Version v1.0.15
+./scripts/build.ps1 -Arch amd64 -Version v1.0.16
 ```
 
 构建脚本输出 `dist/Samuel-windows-amd64.exe`；ARM 设备可将 `-Arch amd64` 改为 `-Arch arm64`。`verify.ps1` 包含自动测试、静态检查、格式检查与双架构构建。也可以创建包含文档的发布压缩包：
 
 ```powershell
-./scripts/package.ps1 -Version v1.0.15
+./scripts/package.ps1 -Version v1.0.16
 ```
 
 常用命令（在可执行文件所在目录运行）：
