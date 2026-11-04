@@ -140,3 +140,27 @@ func yahooCachedSessionExpired(q Quote, now time.Time) bool {
 	w := yahooUSWindow(now, q.MarketState, q.RegularTradeTime)
 	return w.mode != q.UpdateMode || !w.contains(q.TradeTime, now)
 }
+
+func yahooRetainQuote(previous, next Quote, now time.Time) string {
+	if !yahooUSAsset(previous) || !yahooUSAsset(next) || previous.Symbol != next.Symbol || !strings.HasPrefix(previous.UpdateMode, "yahoo_") || !strings.HasPrefix(next.UpdateMode, "yahoo_") {
+		return ""
+	}
+	raw := previous.MarketState
+	if raw == "CLOSED" || raw == "POSTPOST" {
+		raw = ""
+	}
+	// An actual weekend/maintenance close may intentionally return to the
+	// daily headline. During an active trading window, an old headline must
+	// never replace an already verified extended-session quote.
+	w := yahooUSWindow(now, raw, previous.RegularTradeTime)
+	if w.state == StateClosed {
+		return ""
+	}
+	if next.UpdateMode == "yahoo_regular" && next.State == StateClosed && previous.State != StateClosed && previous.UpdateMode != "yahoo_regular" {
+		return "当前时段报价暂缺；保留最近核实报价"
+	}
+	if previous.TradeTime > 0 && next.TradeTime > 0 && next.TradeTime < previous.TradeTime {
+		return "收到较早行情；保留最新已核实报价"
+	}
+	return ""
+}

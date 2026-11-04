@@ -247,7 +247,7 @@ func TestNativeOtherMenuHasDirectSelectionAndSideDelete(t *testing.T) {
 	}
 	var text [128]uint16
 	getString.Call(other, 1, uintptr(unsafe.Pointer(&text[0])), 128, 0x400)
-	if label := syscall.UTF16ToString(text[:]); label != "600519 && 000858" {
+	if label := syscall.UTF16ToString(text[:]); strings.SplitN(label, "\t", 2)[0] != "600519 && 000858" {
 		t.Fatalf("literal ampersand not escaped: %s", label)
 	}
 	flags, _, _ := getState.Call(other, 2, 0x400)

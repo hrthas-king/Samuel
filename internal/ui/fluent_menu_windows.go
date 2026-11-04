@@ -9,6 +9,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/hrthas-king/Samuel/internal/app"
+	"github.com/hrthas-king/Samuel/internal/market"
 	"github.com/hrthas-king/Samuel/internal/winapi"
 )
 
@@ -31,6 +33,7 @@ type menuItemInfo struct {
 
 type fluentEntry struct {
 	label                       string
+	groupID                     string
 	action, remove              Action
 	enabled, checked, separator bool
 	children                    []fluentEntry
@@ -56,6 +59,17 @@ func readFluentMenu(menu uintptr, commands map[Action]customMenuCommand) []fluen
 			continue
 		} // The native fallback's separate delete column.
 		e := fluentEntry{label: strings.ReplaceAll(syscall.UTF16ToString(text[:]), "&&", "&"), action: Action(info.ID), enabled: info.State&3 == 0, checked: info.State&8 != 0, separator: info.Type&0x800 != 0}
+		e.label, _, _ = strings.Cut(e.label, "\t")
+		if id, ok := GroupForAction(e.action); ok {
+			e.groupID = id
+		} else if command, ok := commands[e.action]; ok && !command.remove {
+			e.groupID = command.id
+		} else if e.checked && e.action == 0 {
+			current := market.ActiveGroup()
+			if e.label == current.MenuLabel {
+				e.groupID = current.ID
+			}
+		}
 		if info.Submenu != 0 {
 			e.action = 0
 			e.children = readFluentMenu(info.Submenu, commands)
@@ -79,6 +93,9 @@ type fluentMenu struct {
 	commands                               map[Action]customMenuCommand
 	windows                                []*fluentPopup
 	closed, focusEstablished, outsideArmed bool
+	lastFetch                              time.Time
+	lastMain                               *app.Snapshot
+	lastQuotes                             *menuQuoteSnapshot
 }
 type fluentPopup struct {
 	menu                           *fluentMenu
@@ -188,7 +205,14 @@ func (s *fluentMenu) open(entries []fluentEntry, at point, parent *fluentPopup) 
 		text := winapi.UTF16(e.label)
 		var size textSize
 		getTextExtentPoint32.Call(dc, uintptr(unsafe.Pointer(text)), uintptr(len(syscall.StringToUTF16(e.label))-1), uintptr(unsafe.Pointer(&size)))
-		p.width = max(p.width, min(v.px(430), size.CX+v.px(84)))
+		extra := int32(0)
+		if e.groupID != "" {
+			extra = v.px(184)
+			if e.remove != 0 {
+				extra += v.px(14)
+			}
+		}
+		p.width = max(p.width, min(v.px(680), size.CX+v.px(84)+extra))
 		p.content += p.rowHeight(e)
 	}
 	selectObject.Call(dc, old)
@@ -376,6 +400,18 @@ func (s *fluentMenu) tick() {
 	if s.closed || len(s.windows) == 0 {
 		return
 	}
+	now := time.Now()
+	if s.lastFetch.IsZero() || now.Sub(s.lastFetch) >= 5*time.Second {
+		s.u.requestMenuQuotes()
+		s.lastFetch = now
+	}
+	main, quotes := s.u.latest.Load(), s.u.menuQuotes.Load()
+	if main != s.lastMain || quotes != s.lastQuotes {
+		s.lastMain, s.lastQuotes = main, quotes
+		for _, window := range s.windows {
+			invalidateRect.Call(window.hwnd, 0, 0)
+		}
+	}
 	active, _, _ := panelForeground.Call()
 	insideFocus := false
 	for _, w := range s.windows {
@@ -478,7 +514,19 @@ func (p *fluentPopup) draw(dc uintptr) {
 		if strings.HasPrefix(e.label, "Samuel") {
 			font, textColor = v.heading, c.text
 		}
-		fluentText(dc, e.label, rect{left, r.Top, r.Right - v.px(30), r.Bottom}, font, textColor, 0)
+		right := r.Right - v.px(30)
+		if e.groupID != "" {
+			if e.remove != 0 {
+				right = r.Right - v.px(44)
+			}
+			cells := p.menu.u.groupPercents(e.groupID, time.Now())
+			start := right - v.px(172)
+			fluentText(dc, cells[0].text, rect{start, r.Top, start + v.px(80), r.Bottom}, font, p.menu.u.menuPercentColor(cells[0], c), 2)
+			fluentText(dc, "/", rect{start + v.px(80), r.Top, start + v.px(92), r.Bottom}, font, c.muted, 1)
+			fluentText(dc, cells[1].text, rect{start + v.px(92), r.Top, right, r.Bottom}, font, p.menu.u.menuPercentColor(cells[1], c), 2)
+			right = start - v.px(12)
+		}
+		fluentText(dc, e.label, rect{left, r.Top, right, r.Bottom}, font, textColor, 0)
 		if icon := fluentIcon(e); icon != "" && e.enabled {
 			fluentText(dc, icon, rect{v.px(14), r.Top, v.px(30), r.Bottom}, v.icons, textColor, 1)
 		}

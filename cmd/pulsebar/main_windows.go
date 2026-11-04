@@ -155,6 +155,9 @@ func run(diagnose, runFor time.Duration, output string, probe, dockLeft, showDia
 			defer stop()
 		}
 		barUI := ui.NewUI(version, settings)
+		menuClient := market.NewMenuClient()
+		defer menuClient.Close()
+		barUI.SetMenuQuoteFetcher(ctx, menuClient.Fetch)
 		if enabled, err := startup.Enabled(); err == nil {
 			barUI.SetAutostart(enabled)
 		}

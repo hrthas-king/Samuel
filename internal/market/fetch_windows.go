@@ -88,6 +88,14 @@ func resetSessionLocked() {
 }
 
 func refreshCrumbLocked(ctx context.Context, session uintptr) (string, error) {
+	crumb, err := requestCrumb(ctx, session)
+	if err == nil {
+		cachedCrumb = crumb
+	}
+	return crumb, err
+}
+
+func requestCrumb(ctx context.Context, session uintptr) (string, error) {
 	_, _, _ = doHTTPGet(ctx, session, CookieHost, "/", true)
 
 	var lastErr error
@@ -106,7 +114,6 @@ func refreshCrumbLocked(ctx context.Context, session uintptr) (string, error) {
 		}
 		c := strings.TrimSpace(string(body))
 		if c != "" && len(c) <= 64 && !strings.ContainsAny(c, "<>{}\r\n") {
-			cachedCrumb = c
 			return c, nil
 		}
 		lastErr = fmt.Errorf("无效 crumb 响应")

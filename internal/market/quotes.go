@@ -748,7 +748,7 @@ func TencentQueryForSymbols(symbols []string) (string, bool) {
 
 // ParseTencentQuoteBatch 解析腾讯行情接口 (qt.gtimg.cn) 返回的行情数据。
 func ParseTencentQuoteBatch(expectedSymbols []string, body []byte, rttMs float64, now time.Time) (map[string]SymbolResult, error) {
-	if customSymbols(expectedSymbols) && !(len(expectedSymbols) == 2 && isTrackedSZETF(expectedSymbols[0]) && isTrackedSZETF(expectedSymbols[1])) {
+	if customSymbols(expectedSymbols) {
 		return parseCustomQuoteBatch(expectedSymbols, body, rttMs, now)
 	}
 	if len(body) > MaxBody {
@@ -759,6 +759,21 @@ func ParseTencentQuoteBatch(expectedSymbols []string, body []byte, rttMs float64
 	out := make(map[string]SymbolResult, len(expectedSymbols))
 	cstZone := time.FixedZone("CST", 8*3600)
 	var anySuccess bool
+	var custom []string
+	for _, symbol := range expectedSymbols {
+		if _, builtin := tencentSymbolMap[symbol]; !builtin && watchlist.IsMainlandSymbol(symbol) {
+			custom = append(custom, symbol)
+		}
+	}
+	if len(custom) > 0 {
+		batch, _ := parseCustomQuoteBatch(custom, body, rttMs, now)
+		for symbol, result := range batch {
+			out[symbol] = result
+			if result.Quote != nil {
+				anySuccess = true
+			}
+		}
+	}
 
 	for _, rawLine := range lines {
 		line := strings.TrimSpace(rawLine)
@@ -1423,6 +1438,7 @@ type feedState struct {
 	receivedAt time.Time
 	err        string
 	failures   int
+	retained   string
 }
 
 type Tracker struct {
@@ -1440,6 +1456,30 @@ func NewTracker() *Tracker {
 	}
 	t.Reset()
 	return t
+}
+
+func NewTrackerForSymbols(symbols []string) *Tracker {
+	t := &Tracker{}
+	t.SetSymbols(symbols)
+	return t
+}
+
+// Keep existing observations when the menu's watched symbol set changes.
+func (t *Tracker) SetSymbols(symbols []string) {
+	next := make(map[string]*feedState, len(symbols))
+	ordered := make([]string, 0, len(symbols))
+	for _, sym := range symbols {
+		if sym == "" || next[sym] != nil {
+			continue
+		}
+		state := t.feeds[sym]
+		if state == nil {
+			state = &feedState{err: "等待 " + AliasFor(sym) + " 行情"}
+		}
+		next[sym] = state
+		ordered = append(ordered, sym)
+	}
+	t.symbols, t.feeds = ordered, next
 }
 
 func (t *Tracker) SetGroup(groupID string) {
@@ -1477,10 +1517,17 @@ func (t *Tracker) ApplyBatch(batch map[string]SymbolResult, now time.Time) {
 				st = &feedState{}
 				t.feeds[sym] = st
 			}
+			if st.quote != nil {
+				if reason := yahooRetainQuote(*st.quote, q, now); reason != "" {
+					st.retained = reason
+					continue
+				}
+			}
 			st.quote = &q
 			st.receivedAt = now
 			st.err = ""
 			st.failures = 0
+			st.retained = ""
 		} else {
 			t.Fail(sym, res.Err)
 		}
@@ -1542,6 +1589,9 @@ func (t *Tracker) Views(now time.Time, intervalSeconds int) []View {
 		if st.quote != nil {
 			c := *st.quote
 			qCopy = &c
+			if st.retained != "" {
+				qCopy.Session += "；" + st.retained
+			}
 			if yahooCachedSessionExpired(c, now) {
 				qCopy.State, state = StateClosed, StateClosed
 				qCopy.Session += "；交易时段已切换，等待当前时段行情"

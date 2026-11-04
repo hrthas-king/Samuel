@@ -276,6 +276,11 @@ type UI struct {
 	GroupChanges   chan string
 	customPanel    *customPanel
 	flyout         *fluentMenu
+	menuContext    context.Context
+	menuFetch      func(context.Context, []string) (map[string]market.SymbolResult, error)
+	menuBusy       atomic.Bool
+	menuQuotes     atomic.Pointer[menuQuoteSnapshot]
+	menuTracker    *market.Tracker
 	customEpoch    uint64
 	customCancel   context.CancelFunc
 	customResults  chan pairValidation
@@ -869,6 +874,7 @@ func (u *UI) showDiagnostics() {
 }
 
 func (u *UI) buildMenu() (uintptr, map[Action]customMenuCommand) {
+	u.requestMenuQuotes()
 	menu, _, _ := createMenu.Call()
 	if menu == 0 {
 		return 0, nil
@@ -961,9 +967,9 @@ func (u *UI) buildMenu() (uintptr, map[Action]customMenuCommand) {
 	// 第一行直接显示当前选中的标的对（如：✔ 标普 / 纳指 (VOO / QQQ)）
 	currentSpec := market.GroupByID(currentGroup)
 	if currentSpec.ID == market.Groups[activeIdx].ID {
-		add(Action(uint32(ActionGroupVOOQQQ)+uint32(activeIdx)), currentSpec.MenuLabel, 8)
+		add(Action(uint32(ActionGroupVOOQQQ)+uint32(activeIdx)), u.groupMenuLabel(currentSpec), 8)
 	} else {
-		add(0, currentSpec.MenuLabel, 8|2)
+		add(0, u.groupMenuLabel(currentSpec), 8|2)
 	}
 	customCommands := make(map[Action]customMenuCommand)
 	// 第二行显示可折叠的 More 子菜单，点开后展示其余所有指数/标的
@@ -973,7 +979,7 @@ func (u *UI) buildMenu() (uintptr, map[Action]customMenuCommand) {
 			if g.ID == currentGroup {
 				continue
 			}
-			p := winapi.UTF16(g.MenuLabel)
+			p := winapi.UTF16(u.groupMenuLabel(g))
 			appendMenu.Call(moreMenu, 0, uintptr(uint32(ActionGroupVOOQQQ)+uint32(i)), uintptr(unsafe.Pointer(p)))
 		}
 		u.appendCustomMenu(moreMenu, customCommands)

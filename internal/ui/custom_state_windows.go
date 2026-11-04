@@ -48,7 +48,7 @@ func (u *UI) appendCustomMenu(parent uintptr, commands map[Action]customMenuComm
 		if u.cfg.MarketGroup == pair.ID() {
 			flags |= 8
 		}
-		appendItem(menu, selectID, pair.Label(), flags)
+		appendItem(menu, selectID, u.groupMenuLabel(u.menuGroup(pair.ID())), flags)
 	}
 	if len(u.cfg.CustomPairs) > 0 {
 		// A second popup-menu column supplies a delete action beside each pair.

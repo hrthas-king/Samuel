@@ -58,6 +58,9 @@ func customSymbols(s []string) bool {
 		if !watchlist.IsMainlandSymbol(symbol) {
 			return false
 		}
+		if _, builtin := tencentSymbolMap[symbol]; builtin {
+			return false
+		}
 	}
 	return true
 }
