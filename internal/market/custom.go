@@ -40,6 +40,14 @@ func cloneGroup(g GroupSpec) GroupSpec { g.Symbols = append([]string(nil), g.Sym
 func groupByIDLocked(id string) GroupSpec {
 	for _, g := range Groups {
 		if g.ID == id {
+			if id == GroupTop2US {
+				if topUSCompanies[0] == "" {
+					g.MenuLabel += " · 等待市值排名"
+					return g
+				}
+				g.Symbols = topUSCompanies[:]
+				g.MenuLabel += " (" + strings.Join(g.Symbols, " / ") + ")"
+			}
 			return cloneGroup(g)
 		}
 	}

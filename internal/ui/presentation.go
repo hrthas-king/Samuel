@@ -97,6 +97,9 @@ func quotePriceChangeText(q market.Quote) string {
 func QuoteSummary(s app.Snapshot) string {
 	if len(s.Quotes) == 0 {
 		g := market.GroupByID(s.MarketGroup)
+		if g.ID == market.GroupTop2US && len(g.Symbols) == 0 {
+			return "等待市值排名"
+		}
 		parts := make([]string, 0, len(g.Symbols))
 		for _, sym := range g.Symbols {
 			parts = append(parts, fmt.Sprintf("%s --", market.AliasFor(sym)))
@@ -164,8 +167,7 @@ func TrayTooltipLanguage(s app.Snapshot, language string) string {
 	return prefix + string(utf16.Decode(ipUnits)) + hint + suffix
 }
 
-// OverlayTooltip 生成任务栏悬浮条的详细悬停提示，同时包含 GeoPulse 网络状态与五态时段行情详情。
-func OverlayTooltip(s app.Snapshot) string {
+func networkTooltip(s app.Snapshot) string {
 	ip := s.Geo.IP
 	if ip == "" {
 		ip = "查询中/未知"
@@ -197,7 +199,12 @@ func OverlayTooltip(s app.Snapshot) string {
 	if s.EgressActive {
 		lines = append(lines, "  模式: 检测到 TUN / 系统代理活跃（30s 自动复核出口）")
 	}
-	lines = append(lines, "")
+	return strings.Join(lines, "\n")
+}
+
+// OverlayTooltip combines network and market details for diagnostics.
+func OverlayTooltip(s app.Snapshot) string {
+	lines := []string{networkTooltip(s), ""}
 	for _, v := range s.Quotes {
 		lines = append(lines, "【行情】"+v.Tooltip())
 	}

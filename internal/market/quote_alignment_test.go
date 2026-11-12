@@ -45,6 +45,9 @@ func TestYahooHeadlineCanDeriveMissingChangesFromAuthoritativePreviousClose(t *t
 
 func TestMarketSourcePinningForAllBuiltinGroupsAndNoCrossSourceFallback(t *testing.T) {
 	for _, group := range Groups {
+		if group.ID == GroupTop2US {
+			group.Symbols = []string{"AAPL", "NVDA"}
+		}
 		calls := []string{}
 		yahoo := func(context.Context, []string) (map[string]SymbolResult, error) {
 			calls = append(calls, "Yahoo")

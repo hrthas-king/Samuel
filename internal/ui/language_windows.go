@@ -36,6 +36,7 @@ func (u *UI) setLanguage(language string) error {
 	u.language.Store(language)
 	u.closeFluentMenu()
 	u.hideTooltip()
+	u.dismissChart()
 	if snapshot := u.latest.Load(); snapshot != nil && u.hwnd != 0 {
 		_ = u.update(*snapshot)
 	}

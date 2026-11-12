@@ -1,0 +1,82 @@
+name: macOS
+
+on:
+  create:
+  push:
+    branches: [main, codex/macos]
+    tags: ['macos-v*']
+  pull_request:
+    paths:
+      - 'macos/**'
+      - 'cmd/samuel-data/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'scripts/*macos*'
+      - '.github/workflows/macos.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name != 'create' || github.ref == 'refs/heads/codex/macos' || startsWith(github.ref, 'refs/tags/macos-v')
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: false
+      - name: Go tests and vet
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          go test ./...
+          go vet ./...
+      - name: Build, sign and check the universal app
+        env:
+          RELEASE_REF: ${{ github.ref_name }}
+        run: |
+          version=1.2.5
+          if [[ "$RELEASE_REF" == macos-v* ]]; then version="${RELEASE_REF#macos-v}"; fi
+          bash scripts/build-macos.sh "$version"
+          temp="$(mktemp -d)"
+          ditto -x -k "dist/Samuel-$version-macos-universal.zip" "$temp"
+          codesign --verify --deep --strict "$temp/Samuel.app"
+          python3 scripts/check-macos-bundle.py "$temp/Samuel.app" "$version"
+          (cd dist && shasum -a 256 *.zip > SHA256SUMS-macos.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Samuel-macOS-universal
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS-macos.txt
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/macos-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Samuel-macOS-universal
+          path: release
+      - name: Publish the macOS release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then exit 0; fi
+          gh release create "$RELEASE_TAG" release/*.zip release/SHA256SUMS-macos.txt \
+            --verify-tag --latest=false --title "Samuel ${RELEASE_TAG#macos-v} for macOS" \
+            --notes "Universal build for Apple Silicon and Intel Macs running macOS 13 or later. Unzip Samuel.app and move it to Applications. Click Samuel in the menu bar to open quotes and charts. The app is ad-hoc signed and has not been notarized by Apple."

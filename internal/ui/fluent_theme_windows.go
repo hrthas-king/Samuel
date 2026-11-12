@@ -104,18 +104,19 @@ func (v *fluentVisuals) close() {
 	}
 }
 
-func applyFluentFrame(hwnd uintptr, p fluentPalette) {
+func applyFluentFrame(hwnd uintptr, p fluentPalette) bool {
 	if fluentDWM.Find() != nil {
-		return
+		return false
 	}
 	corner, dark := uint32(2), uint32(0)
 	if p.dark {
 		dark = 1
 	}
-	fluentDWM.Call(hwnd, 33, uintptr(unsafe.Pointer(&corner)), 4)
+	status, _, _ := fluentDWM.Call(hwnd, 33, uintptr(unsafe.Pointer(&corner)), 4)
 	fluentDWM.Call(hwnd, 20, uintptr(unsafe.Pointer(&dark)), 4)
 	border := uint32(p.border)
 	fluentDWM.Call(hwnd, 34, uintptr(unsafe.Pointer(&border)), 4)
+	return int32(status) >= 0
 }
 
 func fluentBox(dc uintptr, bounds rect, radius int32, fill, border uintptr) {

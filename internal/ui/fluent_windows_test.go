@@ -56,7 +56,7 @@ func TestFluentMenuPreservesActionsAndSideDelete(t *testing.T) {
 		}
 	}
 	walk(entries)
-	for _, action := range []Action{ActionRefresh, ActionToggleNetDetail, ActionTrayIconApplication, ActionTrayIconNetwork, ActionToggleLock, ActionDockLeft, ActionToggleColor, ActionGroupVOOQQQ, ActionGroupETF159632159655, ActionScale75, ActionScale130, ActionInterval1, ActionInterval5, ActionDiagnostics, ActionAutostart, ActionExit, actionAddCustom} {
+	for _, action := range []Action{ActionChartFirst, ActionChartSecond, ActionRefresh, ActionToggleNetDetail, ActionTrayIconApplication, ActionTrayIconNetwork, ActionToggleLock, ActionDockLeft, ActionToggleColor, ActionGroupVOOQQQ, ActionGroupETF159632159655, ActionScale75, ActionScale130, ActionInterval1, ActionInterval5, ActionDiagnostics, ActionAutostart, ActionExit, actionAddCustom} {
 		if !found[action] {
 			t.Errorf("menu lost action %d", action)
 		}

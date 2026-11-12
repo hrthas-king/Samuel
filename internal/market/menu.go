@@ -13,7 +13,11 @@ func MenuSymbols() []string {
 	var symbols []string
 	for _, groups := range [][]GroupSpec{Groups, customGroups} {
 		for _, group := range groups {
-			for _, symbol := range group.Symbols {
+			pair := group.Symbols
+			if group.ID == GroupTop2US && topUSCompanies[0] != "" {
+				pair = topUSCompanies[:]
+			}
+			for _, symbol := range pair {
 				if !seen[symbol] {
 					seen[symbol] = true
 					symbols = append(symbols, symbol)

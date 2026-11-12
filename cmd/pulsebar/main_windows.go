@@ -23,7 +23,7 @@ import (
 	"github.com/hrthas-king/Samuel/internal/winapi"
 )
 
-var version = "dev"
+var version = "1.2.5"
 
 func main() {
 	diagnose := flag.Duration("diagnose", 0, "后台无窗口诊断持续时间，例如 10s")
@@ -115,14 +115,15 @@ func run(diagnose, runFor time.Duration, output string, probe, dockLeft, showDia
 	defer cancel()
 
 	engine := app.New(app.Dependencies{
-		ReadCounters:   network.ReadCounters,
-		Ping:           pinger.Ping,
-		MeasureLatency: network.MeasureHTTPSLatency,
-		FetchGeo:       ipinfo.Fetch,
-		FetchQuotes:    market.Fetch,
-		NetworkEvents:  watcher.Events,
-		EgressEvents:   network.WatchEgress(ctx),
-		WatchError:     watchError,
+		ReadCounters:        network.ReadCounters,
+		Ping:                pinger.Ping,
+		MeasureLatency:      network.MeasureHTTPSLatency,
+		FetchGeo:            ipinfo.Fetch,
+		FetchQuotes:         market.Fetch,
+		FetchTopUSCompanies: market.FetchTopUSCompanies,
+		NetworkEvents:       watcher.Events,
+		EgressEvents:        network.WatchEgress(ctx),
+		WatchError:          watchError,
 	})
 
 	var latest atomic.Pointer[app.Snapshot]
@@ -157,7 +158,10 @@ func run(diagnose, runFor time.Duration, output string, probe, dockLeft, showDia
 		barUI := ui.NewUI(version, settings)
 		menuClient := market.NewMenuClient()
 		defer menuClient.Close()
-		barUI.SetMenuQuoteFetcher(ctx, menuClient.Fetch)
+		barUI.SetMenuQuoteFetcher(ctx, func(ctx context.Context, symbols []string) (map[string]market.SymbolResult, error) {
+			engine.RequestTopUSRefresh()
+			return menuClient.Fetch(ctx, symbols)
+		})
 		if enabled, err := startup.Enabled(); err == nil {
 			barUI.SetAutostart(enabled)
 		}

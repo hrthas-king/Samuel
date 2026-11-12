@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/hrthas-king/Samuel/internal/locale"
 	"github.com/hrthas-king/Samuel/internal/watchlist"
@@ -95,6 +96,9 @@ func Path() string {
 	base := os.Getenv("LOCALAPPDATA")
 	if base == "" {
 		base, _ = os.UserConfigDir()
+		if runtime.GOOS == "darwin" {
+			return filepath.Join(base, "Samuel", "config.json")
+		}
 	}
 	return filepath.Join(base, "PulseBar", "config.json")
 }

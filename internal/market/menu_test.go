@@ -3,12 +3,30 @@ package market
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
 
 func TestMenuBatchesPinProvidersBoundSizeAndIsolateFailures(t *testing.T) {
 	before := ActiveGroup().ID
+	groupMu.RLock()
+	previousRank := topUSCompanies
+	groupMu.RUnlock()
+	t.Cleanup(func() {
+		groupMu.Lock()
+		topUSCompanies = previousRank
+		if activeGroup.ID == GroupTop2US {
+			activeGroup = groupByIDLocked(GroupTop2US)
+			Symbols = append([]string(nil), activeGroup.Symbols...)
+		}
+		groupMu.Unlock()
+	})
+	SetTopUSCompanies([2]string{"AAPL", "NVDA"})
+	symbols := MenuSymbols()
+	if !slices.Contains(symbols, "AAPL") || !slices.Contains(symbols, "NVDA") {
+		t.Fatalf("menu quote request missed the ranked symbols: %v", symbols)
+	}
 	yahooCalls, tencentCalls := 0, 0
 	yahoo := func(_ context.Context, symbols []string) (map[string]SymbolResult, error) {
 		yahooCalls++
@@ -37,7 +55,7 @@ func TestMenuBatchesPinProvidersBoundSizeAndIsolateFailures(t *testing.T) {
 		}
 		return result, nil
 	}
-	batch, err := fetchMenuBatches(context.Background(), append(MenuSymbols(), "VOO"), yahoo, tencent)
+	batch, err := fetchMenuBatches(context.Background(), append(symbols, "VOO"), yahoo, tencent)
 	if err != nil || yahooCalls < 2 || tencentCalls < 2 || batch["VOO"].Quote != nil || batch["VOO"].Err == "" || batch["000001.SS"].Quote == nil || ActiveGroup().ID != before {
 		t.Fatalf("menu fetch changes the main group or loses partial success: %v %d %d", err, yahooCalls, tencentCalls)
 	}

@@ -23,14 +23,15 @@ flowchart LR
     QuoteGate --> Quotes["后台 WinHTTP\nVOO / QQQ 24h 实时流校验"]
     Quotes --> Engine
     Engine --> Mailbox["原子快照 + 合并 PostMessage"]
-    Mailbox --> UI["锁定 OS 线程\nGDI 任务栏悬浮条 + 系统托盘"]
+    Mailbox --> UI["锁定 OS 线程\n逐像素 Alpha 悬浮条、分时卡片及系统托盘"]
 ```
 
 ## 1. 核心职责分离
 
 1. **单线程 Win32 UI 层 (`internal/ui`)**：
    - 锁定主 OS 线程，同时承载 **任务栏分层置顶悬浮条 (`WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE`)** 与 **系统托盘动态图标 (`Shell_NotifyIconW`)**。
-   - 锁定时启用 `WS_EX_TRANSPARENT` 鼠标穿透；解锁时支持左键拖拽位置与 `tooltips_class32` 原生悬停提示。
+   - 悬浮条通过 `UpdateLayeredWindow` 合成预乘 Alpha 位图。锁定时启用 `WS_EX_TRANSPARENT`，解锁时由无重定向位图的独立窗口接收拖拽、悬停和点击。
+   - 标的命中区打开独立的 GDI+ 分时卡片。卡片按需读取和缓存源分时数据，完成时投递窗口消息。网络命中区使用 `tooltips_class32`。
    - 不在 UI 线程执行任何 ICMP、WinHTTP、注册表或磁盘写入。
 2. **固定 1 秒网络心跳与网卡采样 (`internal/network` + `internal/monitor`)**：
    - `GetBestInterface` + `GetIfEntry2` 查找当前路由接口；TUN / VPN 接口会通过 `GetIpForwardTable` 的默认路由及其综合 metric 选择一个可用的非隧道底层接口，同等优先级优先硬件接口。不相加多个接口，不采用断开、过滤或回环接口。

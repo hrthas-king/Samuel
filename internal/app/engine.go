@@ -22,6 +22,8 @@ const (
 	GeoManualCooldown = 2 * time.Second
 	GeoTunnelPoll     = 30 * time.Second
 	EventDebounce     = 750 * time.Millisecond
+	quoteRequestLimit = 12 * time.Second
+	topUSPoll         = 30 * time.Second
 )
 
 type Snapshot struct {
@@ -44,33 +46,45 @@ type Snapshot struct {
 }
 
 type Dependencies struct {
-	ReadCounters   func(string) (monitor.Counters, error)
-	Ping           func(string) monitor.Probe
-	MeasureLatency func(context.Context) monitor.Latency
-	FetchGeo       func(context.Context) (ipinfo.Info, error)
-	FetchQuotes    func(context.Context) (map[string]market.SymbolResult, error)
-	NetworkEvents  <-chan struct{}
-	EgressEvents   <-chan monitor.EgressEvent
-	WatchError     string
+	ReadCounters        func(string) (monitor.Counters, error)
+	Ping                func(string) monitor.Probe
+	MeasureLatency      func(context.Context) monitor.Latency
+	FetchGeo            func(context.Context) (ipinfo.Info, error)
+	FetchQuotes         func(context.Context) (map[string]market.SymbolResult, error)
+	FetchTopUSCompanies func(context.Context) ([2]string, error)
+	NetworkEvents       <-chan struct{}
+	EgressEvents        <-chan monitor.EgressEvent
+	WatchError          string
 }
 
 type Engine struct {
-	deps        Dependencies
-	Refresh     chan struct{}
-	Interval    chan int
-	Group       chan string
-	geoCooldown time.Duration
-	tunnelPoll  time.Duration
+	deps          Dependencies
+	Refresh       chan struct{}
+	Interval      chan int
+	Group         chan string
+	geoCooldown   time.Duration
+	tunnelPoll    time.Duration
+	topUSRefresh  chan struct{}
+	topUSInterval time.Duration
 }
 
 func New(deps Dependencies) *Engine {
 	return &Engine{
-		deps:        deps,
-		Refresh:     make(chan struct{}, 1),
-		Interval:    make(chan int, 1),
-		Group:       make(chan string, 1),
-		geoCooldown: GeoCooldown,
-		tunnelPoll:  GeoTunnelPoll,
+		deps:          deps,
+		Refresh:       make(chan struct{}, 1),
+		Interval:      make(chan int, 1),
+		Group:         make(chan string, 1),
+		geoCooldown:   GeoCooldown,
+		tunnelPoll:    GeoTunnelPoll,
+		topUSRefresh:  make(chan struct{}, 1),
+		topUSInterval: topUSPoll,
+	}
+}
+
+func (e *Engine) RequestTopUSRefresh() {
+	select {
+	case e.topUSRefresh <- struct{}{}:
+	default:
 	}
 }
 
@@ -126,6 +140,11 @@ type quoteResult struct {
 	epoch uint64
 }
 
+type topUSResult struct {
+	symbols [2]string
+	err     error
+}
+
 func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 	ctx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
@@ -138,6 +157,7 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 	latencies := make(chan latencyResult, 1)
 	geos := make(chan geoResult, 1)
 	quotesCh := make(chan quoteResult, 1)
+	topUSCh := make(chan topUSResult, 1)
 
 	var generation atomic.Uint64
 	var target atomic.Value
@@ -232,6 +252,8 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 	var quoteFailures int
 	var quoteNextTry time.Time
 	var quoteCancel context.CancelFunc
+	var topUSBusy bool
+	var topUSNextTry time.Time
 	var lastHTTPSuccessAt time.Time
 	var latencyBusy bool
 	var latencyEpoch uint64
@@ -287,8 +309,40 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 	}
 	requestGeo := func() { pending = true; armGeo() }
 
+	triggerTopUS := func() {
+		now := time.Now()
+		if e.deps.FetchTopUSCompanies == nil || topUSBusy || now.Before(topUSNextTry) {
+			return
+		}
+		topUSBusy = true
+		topUSNextTry = now.Add(e.topUSInterval)
+		go func() {
+			rankCtx, stop := context.WithTimeout(ctx, 8*time.Second)
+			defer stop()
+			symbols, err := e.deps.FetchTopUSCompanies(rankCtx)
+			select {
+			case topUSCh <- topUSResult{symbols, err}:
+			case <-ctx.Done():
+			}
+		}()
+	}
+
+	resetQuoteFetch := func() {
+		quoteEpoch++
+		if quoteCancel != nil {
+			quoteCancel()
+			quoteCancel = nil
+		}
+		quoteBusy = false
+		quoteFailures = 0
+		quoteNextTry = time.Time{}
+	}
+
 	triggerQuoteFetch := func(force bool) {
 		if e.deps.FetchQuotes == nil || quoteBusy {
+			return
+		}
+		if snapshot.MarketGroup == market.GroupTop2US && len(market.GroupByID(market.GroupTop2US).Symbols) == 0 {
 			return
 		}
 		now := time.Now()
@@ -297,7 +351,7 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 		}
 		quoteBusy = true
 		ep := quoteEpoch
-		qCtx, qCancel := context.WithTimeout(ctx, 6*time.Second)
+		qCtx, qCancel := context.WithTimeout(ctx, quoteRequestLimit)
 		quoteCancel = qCancel
 		go func() {
 			defer qCancel()
@@ -341,6 +395,9 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 
 	emit()
 	requestGeo()
+	if snapshot.MarketGroup == market.GroupTop2US {
+		triggerTopUS()
+	}
 	triggerQuoteFetch(true)
 	triggerLatency()
 
@@ -445,6 +502,10 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 			debounceUntil = time.Time{}
 			requestGeo()
 			quoteNextTry = time.Time{}
+			if snapshot.MarketGroup == market.GroupTop2US {
+				topUSNextTry = time.Time{}
+				triggerTopUS()
+			}
 			triggerQuoteFetch(true)
 			emit()
 		case n := <-e.Interval:
@@ -459,16 +520,24 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 				spec := market.SetActiveGroup(g)
 				snapshot.MarketGroup = spec.ID
 				quoteTracker.SetGroup(spec.ID)
-				quoteEpoch++
-				if quoteCancel != nil {
-					quoteCancel()
-					quoteCancel = nil
+				resetQuoteFetch()
+				if spec.ID == market.GroupTop2US {
+					triggerTopUS()
 				}
-				quoteBusy = false
-				quoteFailures = 0
-				quoteNextTry = time.Time{}
 				emit()
 				triggerQuoteFetch(true)
+			}
+		case <-e.topUSRefresh:
+			triggerTopUS()
+		case ranking := <-topUSCh:
+			topUSBusy = false
+			if ranking.err == nil && ctx.Err() == nil && market.SetTopUSCompanies(ranking.symbols) {
+				if snapshot.MarketGroup == market.GroupTop2US {
+					quoteTracker.SetSymbols(ranking.symbols[:])
+					resetQuoteFetch()
+					triggerQuoteFetch(true)
+				}
+				emit()
 			}
 		case <-poll.C:
 			requestGeo()
@@ -477,6 +546,9 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 				requestGeo()
 			}
 		case <-quoteTicker.C:
+			if snapshot.MarketGroup == market.GroupTop2US {
+				triggerTopUS()
+			}
 			triggerQuoteFetch(false)
 		case <-refreshC:
 			refreshC = nil

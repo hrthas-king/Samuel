@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -12,7 +11,6 @@ import (
 	"github.com/hrthas-king/Samuel/internal/market"
 )
 
-var checkedDate = regexp.MustCompile(`\d{4}-\d{2}-\d{2}`)
 var englishNames = map[string]string{"000001.SS": "Shanghai", "399006.SZ": "ChiNext", "399001.SZ": "Shenzhen", "^HSI": "HSI", "^HSTECH": "HSTECH", "^N225": "Nikkei 225", "^KS11": "KOSPI", "^FCHI": "CAC 40", "^GDAXI": "DAX", "^NDX": "Nasdaq 100", "^GSPC": "S&P 500", "GC=F": "Gold", "BZ=F": "Brent", "159632.SZ": "Nasdaq ETF", "159655.SZ": "S&P 500 ETF"}
 
 func groupLabel(language string, group market.GroupSpec) string {
@@ -26,11 +24,10 @@ func groupLabel(language string, group market.GroupSpec) string {
 	case market.GroupSOXXSMH:
 		return "Semiconductor ETFs (" + pair + ")"
 	case market.GroupTop2US:
-		label := "Largest U.S. companies (" + pair + ")"
-		if date := checkedDate.FindString(group.MenuLabel); date != "" {
-			label += " · Checked " + date
+		if len(group.Symbols) == 0 {
+			return "Largest U.S. companies · " + locale.Text(language, "等待市值排名")
 		}
-		return label
+		return "Largest U.S. companies (" + pair + ")"
 	case market.GroupGoldOil:
 		return "Gold / Brent crude (GC / BZ)"
 	case market.GroupCNIndices:
@@ -68,7 +65,11 @@ func QuoteSummaryLanguage(s app.Snapshot, language string) string {
 	var parts []string
 	views := s.Quotes
 	if len(views) == 0 {
-		for _, symbol := range market.GroupByID(s.MarketGroup).Symbols {
+		group := market.GroupByID(s.MarketGroup)
+		if group.ID == market.GroupTop2US && len(group.Symbols) == 0 {
+			return locale.Text(language, "等待市值排名")
+		}
+		for _, symbol := range group.Symbols {
 			views = append(views, market.View{Symbol: symbol})
 		}
 	}

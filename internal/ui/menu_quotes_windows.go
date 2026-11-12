@@ -55,7 +55,7 @@ func (u *UI) requestMenuQuotes() {
 	}()
 }
 
-func (u *UI) groupPercents(id string, now time.Time) [2]menuPercent {
+func (u *UI) groupPercents(group market.GroupSpec, now time.Time) [2]menuPercent {
 	cells := [2]menuPercent{{text: "--"}, {text: "--"}}
 	bySymbol := make(map[string]market.View)
 	if overview := u.menuQuotes.Load(); overview != nil && now.Sub(overview.at) <= 15*time.Second {
@@ -71,7 +71,6 @@ func (u *UI) groupPercents(id string, now time.Time) [2]menuPercent {
 			}
 		}
 	}
-	group := u.menuGroup(id)
 	for i, sym := range group.Symbols {
 		if i >= len(cells) {
 			break
@@ -99,7 +98,7 @@ func (u *UI) menuGroup(id string) market.GroupSpec {
 }
 
 func (u *UI) groupMenuLabel(group market.GroupSpec) string {
-	cells := u.groupPercents(group.ID, time.Now())
+	cells := u.groupPercents(group, time.Now())
 	return groupLabel(u.Language(), group) + "\t" + cells[0].text + " / " + cells[1].text
 }
 

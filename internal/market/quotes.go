@@ -73,7 +73,7 @@ type GroupSpec struct {
 var Groups = []GroupSpec{
 	{ID: GroupVOOQQQ, MenuLabel: "标普 / 纳指 ETF (VOO / QQQ)", Symbols: []string{"VOO", "QQQ"}},
 	{ID: GroupSOXXSMH, MenuLabel: "半导体 ETF (SOXX / SMH)", Symbols: []string{"SOXX", "SMH"}},
-	{ID: GroupTop2US, MenuLabel: "美股市值前二 (NVDA / AAPL) · 2026-10-29核对", Symbols: []string{"NVDA", "AAPL"}},
+	{ID: GroupTop2US, MenuLabel: "美股市值前二"},
 	{ID: GroupGoldOil, MenuLabel: "黄金 / 布伦特原油 (GC / BZ)", Symbols: []string{"GC=F", "BZ=F"}},
 	{ID: GroupCNIndices, MenuLabel: "A股指数 (上证 / 创指)", Symbols: []string{"000001.SS", "399006.SZ"}},
 	{ID: GroupHKIndices, MenuLabel: "港股指数 (恒指 / 恒科)", Symbols: []string{"^HSI", "^HSTECH"}},

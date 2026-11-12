@@ -95,3 +95,81 @@ func TestEngineGeoAndQuotesAggregation(t *testing.T) {
 		}
 	}
 }
+
+func TestEngineUpdatesTopUSQuotesAfterRankingChanges(t *testing.T) {
+	defer market.SetActiveGroup(market.DefaultGroup)
+	market.SetActiveGroup(market.GroupTop2US)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ranks := make(chan [2]string, 1)
+	engine := New(Dependencies{
+		ReadCounters: func(string) (monitor.Counters, error) {
+			return monitor.Counters{LUID: 1, At: time.Now()}, nil
+		},
+		Ping: func(string) monitor.Probe {
+			return monitor.Probe{Success: true, Uplink: monitor.UplinkConfirmed, At: time.Now()}
+		},
+		FetchGeo: func(context.Context) (ipinfo.Info, error) {
+			return ipinfo.Info{Country: "US", At: time.Now()}, nil
+		},
+		FetchTopUSCompanies: func(ctx context.Context) ([2]string, error) {
+			select {
+			case pair := <-ranks:
+				return pair, nil
+			case <-ctx.Done():
+				return [2]string{}, ctx.Err()
+			}
+		},
+		FetchQuotes: func(context.Context) (map[string]market.SymbolResult, error) {
+			results := make(map[string]market.SymbolResult)
+			for _, symbol := range market.ActiveSymbols() {
+				results[symbol] = market.SymbolResult{Quote: &market.Quote{
+					Symbol: symbol, Price: 100, State: market.StateRegular, UpdateMode: "regular_realtime",
+				}}
+			}
+			return results, nil
+		},
+	})
+	engine.topUSInterval = 0
+	published := make(chan Snapshot, 32)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		engine.Run(ctx, 1, func(s Snapshot) {
+			select {
+			case published <- s:
+			default:
+			}
+		})
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	waitForPair := func(want [2]string) {
+		t.Helper()
+		for {
+			select {
+			case s := <-published:
+				if s.MarketGroup == market.GroupTop2US && len(s.Quotes) == 2 &&
+					s.Quotes[0].Symbol == want[0] && s.Quotes[1].Symbol == want[1] &&
+					s.Quotes[0].Healthy && s.Quotes[1].Healthy {
+					return
+				}
+			case <-ctx.Done():
+				t.Fatalf("quote snapshots did not follow ranking %v", want)
+			}
+		}
+	}
+
+	first := [2]string{"AAPL", "NVDA"}
+	ranks <- first
+	waitForPair(first)
+	// The next ordinary quote poll refreshes the ranking without a menu action.
+	reordered := [2]string{"NVDA", "AAPL"}
+	ranks <- reordered
+	waitForPair(reordered)
+	replacement := [2]string{"MSFT", "NVDA"}
+	ranks <- replacement
+	engine.RequestTopUSRefresh()
+	waitForPair(replacement)
+}

@@ -29,11 +29,11 @@ func TestMenuPercentsFollowPairOrderActiveQuotesAndColorChoice(t *testing.T) {
 	now := time.Now()
 	u.menuQuotes.Store(&menuQuoteSnapshot{at: now, views: []market.View{menuFixture("^HSI", 1), menuFixture("^HSTECH", -2), menuFixture("SOXX", -3.4), menuFixture("SMH", 5.6)}})
 	u.latest.Store(&app.Snapshot{MarketGroup: market.GroupHKIndices, Quotes: []market.View{menuFixture("^HSI", 1.23), menuFixture("^HSTECH", -.89)}})
-	cells := u.groupPercents(market.GroupHKIndices, now)
+	cells := u.groupPercents(u.menuGroup(market.GroupHKIndices), now)
 	if cells[0].text != "+1.23%" || cells[1].text != "-0.89%" {
 		t.Fatal("active menu row disagrees with the ticker or swaps its symbols:", cells)
 	}
-	cells = u.groupPercents(market.GroupSOXXSMH, now)
+	cells = u.groupPercents(u.menuGroup(market.GroupSOXXSMH), now)
 	if cells[0].text != "-3.40%" || cells[1].text != "+5.60%" {
 		t.Fatal("non-selected pair has no menu percentage:", cells)
 	}
@@ -46,7 +46,7 @@ func TestMenuPercentsFollowPairOrderActiveQuotesAndColorChoice(t *testing.T) {
 	if u.menuPercentColor(cells[1], palette) != red || u.menuPercentColor(cells[0], palette) != green {
 		t.Fatal("configured rise/fall colors are not respected")
 	}
-	cells = u.groupPercents(market.GroupSOXXSMH, now.Add(16*time.Second))
+	cells = u.groupPercents(u.menuGroup(market.GroupSOXXSMH), now.Add(16*time.Second))
 	if cells[0].text != "--" || cells[1].text != "--" {
 		t.Fatal("an old menu cache was presented as fresh")
 	}
@@ -87,7 +87,7 @@ func TestMenuQuoteFetchIsAsynchronousDeduplicatedAndCancelable(t *testing.T) {
 	for u.menuBusy.Load() && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if u.menuQuotes.Load() == nil || u.groupPercents(market.GroupSOXXSMH, time.Now())[0].text != "+1.20%" {
+	if u.menuQuotes.Load() == nil || u.groupPercents(u.menuGroup(market.GroupSOXXSMH), time.Now())[0].text != "+1.20%" {
 		t.Fatal("completed menu data was not published")
 	}
 	cancel()
@@ -105,7 +105,10 @@ func TestFluentPercentageColumnRendersAndUpdatesInBothThemes(t *testing.T) {
 		u := NewUI("v1.0.14", cfg)
 		var views []market.View
 		for _, group := range market.Groups {
-			views = append(views, menuFixture(group.Symbols[0], 1.25), menuFixture(group.Symbols[1], -.75))
+			symbols := u.menuGroup(group.ID).Symbols
+			if len(symbols) == 2 {
+				views = append(views, menuFixture(symbols[0], 1.25), menuFixture(symbols[1], -.75))
+			}
 		}
 		u.menuQuotes.Store(&menuQuoteSnapshot{at: time.Now(), views: views})
 		menu, commands := u.buildMenu()

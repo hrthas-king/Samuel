@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unicode/utf16"
 	"unsafe"
 
@@ -56,6 +57,8 @@ const (
 	ActionTrayIconNetwork
 	ActionLanguageChinese
 	ActionLanguageEnglish
+	ActionChartFirst
+	ActionChartSecond
 )
 
 func GroupForAction(act Action) (string, bool) {
@@ -90,8 +93,9 @@ var scaleMenuLabels = map[int]string{
 }
 
 const (
-	wmTray   = 0x8001
-	wmUpdate = 0x8002
+	wmTray          = 0x8001
+	wmUpdate        = 0x8002
+	overlayAuxClass = "Samuel.OverlayAux"
 )
 
 const (
@@ -114,7 +118,6 @@ var (
 	destroyWindow        = user32.NewProc("DestroyWindow")
 	showWindow           = user32.NewProc("ShowWindow")
 	setWindowPos         = user32.NewProc("SetWindowPos")
-	setLayeredAttrs      = user32.NewProc("SetLayeredWindowAttributes")
 	getWindowLongPtr     = user32.NewProc("GetWindowLongPtrW")
 	setWindowLongPtr     = user32.NewProc("SetWindowLongPtrW")
 	getMessage           = user32.NewProc("GetMessageW")
@@ -132,6 +135,7 @@ var (
 	trackMouseEvent      = user32.NewProc("TrackMouseEvent")
 	getSystemMetrics     = user32.NewProc("GetSystemMetrics")
 	getDpiForSystem      = user32.NewProc("GetDpiForSystem")
+	getDpiForWindow      = user32.NewProc("GetDpiForWindow")
 	monitorFromRect      = user32.NewProc("MonitorFromRect")
 	invalidateRect       = user32.NewProc("InvalidateRect")
 	beginPaint           = user32.NewProc("BeginPaint")
@@ -158,8 +162,6 @@ var (
 	deleteObject         = gdi32.NewProc("DeleteObject")
 	setTextColor         = gdi32.NewProc("SetTextColor")
 	setBkMode            = gdi32.NewProc("SetBkMode")
-	ellipse              = gdi32.NewProc("Ellipse")
-	setPixel             = gdi32.NewProc("SetPixel")
 	getTextExtentPoint32 = gdi32.NewProc("GetTextExtentPoint32W")
 	initCommonControlsEx = comctl32.NewProc("InitCommonControlsEx")
 )
@@ -250,12 +252,10 @@ type UI struct {
 	dpiScale       float64
 	scale          float64
 	width, height  int32
-	bgBrush        uintptr
-	brushGreen     uintptr
-	brushBlue      uintptr
-	brushYellow    uintptr
-	brushRed       uintptr
-	brushGray      uintptr
+	barBitmap      alphaFrame
+	barHits        [3]barHit
+	barInput       uintptr
+	inputBounds    rect
 	font           uintptr
 	stockFont      uintptr
 	capFont        uintptr
@@ -271,15 +271,15 @@ type UI struct {
 	updatePending  atomic.Bool
 	startup        atomic.Bool
 	cfg            config.Config
-	dragging       bool
-	dragOffsetX    int32
-	dragOffsetY    int32
-	hoverTracking  bool
+	press          barPress
+	hover          barHover
 	tooltipVisible bool
 	Actions        chan Action
 	GroupChanges   chan string
 	customPanel    *customPanel
 	flyout         *fluentMenu
+	chart          *chartFlyout
+	chartContext   context.Context
 	menuContext    context.Context
 	menuFetch      func(context.Context, []string) (map[string]market.SymbolResult, error)
 	menuBusy       atomic.Bool
@@ -327,23 +327,6 @@ func (u *UI) recalcScale() {
 		u.dpiScale = 1.0
 	}
 	u.scale = u.dpiScale * float64(pct) / 100.0
-}
-
-func (u *UI) rebuildFonts() {
-	if u.font != 0 {
-		deleteObject.Call(u.font)
-	}
-	if u.capFont != 0 {
-		deleteObject.Call(u.capFont)
-	}
-	if u.stockFont != 0 {
-		deleteObject.Call(u.stockFont)
-	}
-	fontName := winapi.UTF16("Segoe UI")
-	u.font, _, _ = createFont.Call(uintptr(int(-u.px(14))), 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 3, 0, uintptr(unsafe.Pointer(fontName)))
-	u.stockFont, _, _ = createFont.Call(uintptr(int(-u.px(12))), 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 3, 0, uintptr(unsafe.Pointer(fontName)))
-	u.capFont, _, _ = createFont.Call(uintptr(int(-u.px(9))), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 3, 0, uintptr(unsafe.Pointer(fontName)))
-	runtime.KeepAlive(fontName)
 }
 
 func (u *UI) SetAutostart(enabled bool) { u.startup.Store(enabled) }
@@ -470,7 +453,7 @@ func (u *UI) showTooltip() {
 	if s == nil {
 		return
 	}
-	copyText(u.tooltipBuf[:], OverlayTooltipLanguage(*s, u.Language()))
+	copyText(u.tooltipBuf[:], snapshotText(u.Language(), networkTooltip(*s), s))
 	sendMessage.Call(u.tooltipHwnd, 0x439, 0, uintptr(unsafe.Pointer(&u.tool))) // TTM_UPDATETIPTEXTW
 	var pt point
 	getCursor.Call(uintptr(unsafe.Pointer(&pt)))
@@ -601,254 +584,6 @@ func (u *UI) setTrayIcon(style string) error {
 	return nil
 }
 
-func (u *UI) drawFlowText(dc uintptr, text string, leftPx int32, color uintptr) int32 {
-	return u.drawFlowTextRow(dc, text, leftPx, color, 0, u.height)
-}
-
-func (u *UI) drawFlowTextRow(dc uintptr, text string, leftPx int32, color uintptr, top, bottom int32) int32 {
-	if text == "" {
-		return leftPx
-	}
-	setTextColor.Call(dc, color)
-	enc := utf16.Encode([]rune(text))
-	var sz textSize
-	getTextExtentPoint32.Call(dc, uintptr(unsafe.Pointer(&enc[0])), uintptr(len(enc)), uintptr(unsafe.Pointer(&sz)))
-	rightPx := leftPx + sz.CX + max(2, u.px(2))
-	rc := rect{Left: leftPx, Top: top, Right: rightPx, Bottom: bottom}
-	ptr := winapi.UTF16(text)
-	drawText.Call(dc, uintptr(unsafe.Pointer(ptr)), ^uintptr(0), uintptr(unsafe.Pointer(&rc)), 0x20|0x4|0x8000)
-	runtime.KeepAlive(ptr)
-	runtime.KeepAlive(enc)
-	return leftPx + sz.CX
-}
-
-func (u *UI) drawCirclePx(dc uintptr, brush uintptr, centerXPx, centerYPx, radiusPx int32) {
-	old, _, _ := selectObject.Call(dc, brush)
-	ellipse.Call(
-		dc,
-		uintptr(centerXPx-radiusPx),
-		uintptr(centerYPx-radiusPx),
-		uintptr(centerXPx+radiusPx),
-		uintptr(centerYPx+radiusPx),
-	)
-	selectObject.Call(dc, old)
-}
-
-// drawPurpleMoonPx 使用 GDI 像素几何在像素坐标 (centerXPx, centerYPx) 绘制无字体依赖的亮紫色实心月牙。
-func (u *UI) drawPurpleMoonPx(dc uintptr, centerXPx, centerYPx int32) {
-	cx := float64(centerXPx)
-	cy := float64(centerYPx)
-	s := u.scale
-	outerR := 5.2 * s
-	outerR2 := outerR * outerR
-	cutX := cx + 2.3*s
-	cutY := cy - 0.9*s
-	cutR := 4.2 * s
-	cutR2 := cutR * cutR
-	purple := colorRef(186, 85, 255)
-	span := int32(math.Ceil(outerR + 1))
-	for dy := -span; dy <= span; dy++ {
-		for dx := -span; dx <= span; dx++ {
-			x := cx + float64(dx)
-			y := cy + float64(dy)
-			d1 := float64(dx*dx + dy*dy)
-			cdx := x - cutX
-			cdy := y - cutY
-			d2 := cdx*cdx + cdy*cdy
-			if d1 <= outerR2 && d2 > cutR2 {
-				setPixel.Call(dc, uintptr(centerXPx+dx), uintptr(centerYPx+dy), purple)
-			}
-		}
-	}
-}
-
-// drawYellowSunPx 使用 GDI 像素几何在像素坐标 (centerXPx, centerYPx) 绘制无字体依赖的明黄色实心太阳与八向光芒。
-func (u *UI) drawYellowSunPx(dc uintptr, centerXPx, centerYPx int32) {
-	s := u.scale
-	yellow := colorRef(255, 214, 10)
-	span := int32(math.Ceil(6.2*s + 1))
-	for dy := -span; dy <= span; dy++ {
-		for dx := -span; dx <= span; dx++ {
-			nx := float64(dx) / s
-			ny := float64(dy) / s
-			d2 := nx*nx + ny*ny
-			hit := d2 <= 3.1*3.1
-			if !hit && d2 >= 3.9*3.9 && d2 <= 5.8*5.8 {
-				ax, ay := math.Abs(nx), math.Abs(ny)
-				diag := math.Abs(ax-ay) * 0.7071
-				if ax <= 0.72 || ay <= 0.72 || diag <= 0.72 {
-					hit = true
-				}
-			}
-			if hit {
-				setPixel.Call(dc, uintptr(centerXPx+dx), uintptr(centerYPx+dy), yellow)
-			}
-		}
-	}
-}
-
-func (u *UI) paint(hwnd uintptr) {
-	var ps paintStruct
-	dc, _, _ := beginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
-	if dc == 0 {
-		return
-	}
-	defer endPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
-	u.drawBar(dc, hwnd)
-}
-
-func (u *UI) drawBar(dc, hwnd uintptr) {
-
-	rc := rect{Left: 0, Top: 0, Right: u.width, Bottom: u.height}
-	fillRect.Call(dc, uintptr(unsafe.Pointer(&rc)), u.bgBrush)
-
-	oldFont, _, _ := selectObject.Call(dc, u.font)
-	defer selectObject.Call(dc, oldFont)
-	setBkMode.Call(dc, 1) // TRANSPARENT
-
-	var snap app.Snapshot
-	if p := u.latest.Load(); p != nil {
-		snap = *p
-	} else {
-		snap = app.Snapshot{Status: monitor.Unknown}
-	}
-
-	centerY := u.height / 2
-	dotRadius := max(3, u.px(4))
-	curX := u.px(5)
-
-	// 1. 流式紧凑绘制 GeoPulse 段（消除网速与 RTT 之间的多余空白）
-	netBrush := u.brushGray
-	switch snap.Status {
-	case monitor.Online:
-		netBrush = u.brushGreen
-	case monitor.Degraded:
-		netBrush = u.brushYellow
-	case monitor.Offline:
-		netBrush = u.brushRed
-	}
-	u.drawCirclePx(dc, netBrush, curX+dotRadius, centerY, dotRadius)
-	curX += dotRadius*2 + u.px(5)
-	curX = u.drawFlowText(dc, Country(snap), curX, colorRef(240, 246, 255)) + u.px(6)
-
-	if !u.cfg.ShowNetDetail {
-		upColor := colorRef(100, 116, 139)
-		if snap.Rates.Up > 0 {
-			upColor = colorRef(0, 229, 255)
-		}
-		downColor := colorRef(100, 116, 139)
-		if snap.Rates.Down > 0 {
-			downColor = colorRef(56, 189, 248)
-		}
-		curX = u.drawFlowText(dc, "↑", curX, upColor) + u.px(1)
-		curX = u.drawFlowText(dc, "↓", curX, downColor) + u.px(6)
-		curX = u.drawFlowText(dc, "|", curX, colorRef(120, 130, 145)) + u.px(7)
-	} else {
-		upStr, downStr := "--", "--"
-		if snap.Rates.Valid {
-			upStr, downStr = CompactSpeed(snap.Rates.Up), CompactSpeed(snap.Rates.Down)
-		}
-		rateColor := colorRef(148, 163, 184)
-		if snap.Rates.Up > 0 || snap.Rates.Down > 0 {
-			rateColor = colorRef(125, 211, 252)
-		}
-		curX = u.drawFlowText(dc, fmt.Sprintf("↑%s ↓%s", upStr, downStr), curX, rateColor) + u.px(7)
-		rttColor := colorRef(148, 163, 184)
-		if CompactRTT(snap) != "--" {
-			rttColor = colorRef(167, 243, 208)
-		}
-		curX = u.drawFlowText(dc, CompactRTT(snap), curX, rttColor) + u.px(6)
-		curX = u.drawFlowText(dc, "|", curX, colorRef(120, 130, 145)) + u.px(7)
-	}
-
-	// 2. 流式紧凑绘制多市场行情段（五态时段信号 + 异常感叹号 + 简洁别名 + 自适应价格与涨跌幅）
-	views := snap.Quotes
-	if len(views) == 0 {
-		g := market.GroupByID(u.cfg.MarketGroup)
-		for _, sym := range g.Symbols {
-			views = append(views, market.View{
-				Symbol:  sym,
-				Alias:   market.AliasFor(sym),
-				State:   market.StateClosed,
-				Healthy: false,
-			})
-		}
-	}
-	twoRows := false
-	for _, view := range views {
-		if view.Quote != nil && view.Quote.HasSecondaryLine() {
-			twoRows = true
-			break
-		}
-	}
-	rowBottom, quoteCenter := u.height, centerY
-	if twoRows {
-		rowBottom = u.px(17)
-		quoteCenter = rowBottom / 2
-		selectObject.Call(dc, u.stockFont)
-	}
-	for i, v := range views {
-		iconCenterX := curX + dotRadius + u.px(1)
-		switch v.EffectiveState() {
-		case market.StatePreMarket:
-			u.drawYellowSunPx(dc, iconCenterX, quoteCenter)
-		case market.StateOvernight:
-			u.drawPurpleMoonPx(dc, iconCenterX, quoteCenter)
-		case market.StateRegular:
-			u.drawCirclePx(dc, u.brushGreen, iconCenterX, quoteCenter, dotRadius)
-		case market.StatePostMarket:
-			u.drawCirclePx(dc, u.brushBlue, iconCenterX, quoteCenter, dotRadius)
-		default:
-			u.drawCirclePx(dc, u.brushGray, iconCenterX, quoteCenter, dotRadius)
-		}
-		curX += dotRadius*2 + u.px(6)
-
-		if !v.Healthy {
-			curX = u.drawFlowTextRow(dc, "!", curX, colorRef(255, 82, 82), 0, rowBottom) + u.px(3)
-		}
-
-		nameLeft := curX
-		curX = u.drawFlowTextRow(dc, quoteName(u.Language(), v), curX, colorRef(240, 240, 240), 0, rowBottom) + u.px(5)
-
-		text := "---.-- --.--%"
-		pctColor := colorRef(170, 170, 170)
-		if v.Quote != nil {
-			pct := v.Quote.ChangePercent
-			text = quotePriceChangeText(*v.Quote)
-			if math.Abs(pct) < 0.005 {
-				pctColor = colorRef(240, 240, 240)
-			} else if (pct > 0) == u.cfg.UpIsRed {
-				pctColor = colorRef(255, 119, 119)
-			} else {
-				pctColor = colorRef(119, 204, 153)
-			}
-		}
-		curX = u.drawFlowTextRow(dc, text, curX, pctColor, 0, rowBottom)
-		if v.Quote != nil && v.Quote.HasSecondaryLine() {
-			prior, _, _ := selectObject.Call(dc, u.capFont)
-			capRight := u.drawFlowTextRow(dc, u.tr(v.Quote.SecondaryText()), nameLeft, colorRef(175, 185, 198), rowBottom, u.height)
-			selectObject.Call(dc, prior)
-			curX = max(curX, capRight)
-		}
-		if i == 0 && len(views) > 1 {
-			curX += u.px(7)
-			curX = u.drawFlowText(dc, "|", curX, colorRef(120, 130, 145)) + u.px(7)
-		}
-	}
-
-	neededW := curX + u.px(6)
-	diff := neededW - u.width
-	if diff < 0 {
-		diff = -diff
-	}
-	if neededW > u.width || diff > u.px(8) {
-		u.width = neededW
-		if hwnd != 0 {
-			setWindowPos.Call(hwnd, ^uintptr(0), 0, 0, uintptr(u.width), uintptr(u.height), 0x0002|0x0010)
-		}
-	}
-}
-
 func (u *UI) applyLockStyle() {
 	style, _, _ := getWindowLongPtr.Call(u.hwnd, ^uintptr(19)) // GWL_EXSTYLE = -20
 	if u.cfg.Locked {
@@ -858,14 +593,24 @@ func (u *UI) applyLockStyle() {
 	}
 	setWindowLongPtr.Call(u.hwnd, ^uintptr(19), style)
 	setWindowPos.Call(u.hwnd, ^uintptr(0), 0, 0, 0, 0, 0x1|0x2|0x10|0x20)
+	if u.cfg.Locked {
+		u.barMouseLeave()
+		u.dismissChart()
+		if u.barInput != 0 {
+			showWindow.Call(u.barInput, 0)
+		}
+	} else {
+		u.enableBarInput()
+	}
 }
 
 func (u *UI) dockLeft() {
+	u.dismissChart()
 	u.cfg.Placement = "left"
 	u.cfg.X = nil
 	u.cfg.Y = nil
 	x, y := u.initialPosition()
-	setWindowPos.Call(u.hwnd, ^uintptr(0), uintptr(x), uintptr(y), uintptr(u.width), uintptr(u.height), 0x10)
+	setWindowPos.Call(u.hwnd, ^uintptr(0), uintptr(x), uintptr(y), 0, 0, 0x1|0x10)
 	_ = config.Save(u.cfg)
 }
 
@@ -907,6 +652,12 @@ func (u *UI) buildMenu() (uintptr, map[Action]customMenuCommand) {
 		add(0, "行情: "+QuoteSummaryLanguage(*s, u.Language()), 2)
 		if s.EgressActive {
 			add(0, "TUN/代理活跃：地区每 30 秒自动复核", 2)
+		}
+	}
+	add(0, "", 0x800)
+	for i, action := range []Action{ActionChartFirst, ActionChartSecond} {
+		if symbol := u.chartSlot(i); symbol != "" {
+			add(action, "分时详情 · "+quoteName(u.Language(), u.chartView(symbol)), 0)
 		}
 	}
 	add(0, "", 0x800)
@@ -986,7 +737,7 @@ func (u *UI) buildMenu() (uintptr, map[Action]customMenuCommand) {
 			if g.ID == currentGroup {
 				continue
 			}
-			p := winapi.UTF16(u.groupMenuLabel(g))
+			p := winapi.UTF16(u.groupMenuLabel(u.menuGroup(g.ID)))
 			appendMenu.Call(moreMenu, 0, uintptr(uint32(ActionGroupVOOQQQ)+uint32(i)), uintptr(unsafe.Pointer(p)))
 		}
 		u.appendCustomMenu(moreMenu, customCommands)
@@ -1050,6 +801,7 @@ func (u *UI) buildMenu() (uintptr, map[Action]customMenuCommand) {
 
 func (u *UI) menu() {
 	u.hideTooltip()
+	u.dismissChart()
 	menu, customCommands := u.buildMenu()
 	if menu == 0 {
 		return
@@ -1092,6 +844,8 @@ func (u *UI) handleMenuSelection(cmd uintptr, customCommands map[Action]customMe
 
 func (u *UI) handleAction(act Action) {
 	switch act {
+	case ActionChartFirst, ActionChartSecond:
+		u.openChartSlot(int(act - ActionChartFirst))
 	case ActionLanguageChinese, ActionLanguageEnglish:
 		language := locale.Chinese
 		if act == ActionLanguageEnglish {
@@ -1110,10 +864,6 @@ func (u *UI) handleAction(act Action) {
 		}
 	case ActionToggleNetDetail:
 		u.cfg.ShowNetDetail = !u.cfg.ShowNetDetail
-		u.updateDimensions()
-		var rc rect
-		getWindowRect.Call(u.hwnd, uintptr(unsafe.Pointer(&rc)))
-		setWindowPos.Call(u.hwnd, ^uintptr(0), uintptr(rc.Left), uintptr(rc.Top), uintptr(u.width), uintptr(u.height), 0x10)
 		invalidateRect.Call(u.hwnd, 0, 0)
 		_ = config.Save(u.cfg)
 	case ActionToggleLock:
@@ -1142,7 +892,7 @@ func (u *UI) handleAction(act Action) {
 				getWindowRect.Call(u.hwnd, uintptr(unsafe.Pointer(&rc)))
 				x, y = rc.Left, rc.Top
 			}
-			setWindowPos.Call(u.hwnd, ^uintptr(0), uintptr(x), uintptr(y), uintptr(u.width), uintptr(u.height), 0x10)
+			setWindowPos.Call(u.hwnd, ^uintptr(0), uintptr(x), uintptr(y), 0, 0, 0x1|0x10)
 			invalidateRect.Call(u.hwnd, 0, 0)
 			return
 		}
@@ -1180,6 +930,13 @@ func (u *UI) handleAction(act Action) {
 }
 
 func (u *UI) windowProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr {
+	if u.chartOpen() && hwnd == u.chart.hwnd {
+		return u.chartWindowProc(hwnd, msg, wparam, lparam)
+	}
+	if u.hwnd != 0 && hwnd != u.hwnd && hwnd != u.barInput {
+		r, _, _ := defWindowProc.Call(hwnd, uintptr(msg), wparam, lparam)
+		return r
+	}
 	if msg == u.taskbarMessage && u.taskbarMessage != 0 {
 		u.addTrayIcon()
 		return 0
@@ -1190,6 +947,9 @@ func (u *UI) windowProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintpt
 		return 0
 	case wmCustomResult:
 		u.handleCustomResults()
+		return 0
+	case wmChartReady:
+		u.chartReady()
 		return 0
 	case 0x000F: // WM_PAINT
 		u.paint(hwnd)
@@ -1204,9 +964,13 @@ func (u *UI) windowProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintpt
 		return 0
 	case wmTray:
 		event := uint32(lparam & 0xffff)
-		if event == 0x7b || event == 0x205 || event == 0x400 || event == 0x401 {
+		switch event {
+		case 0x7b, 0x205: // WM_CONTEXTMENU, WM_RBUTTONUP
 			u.menu()
-		} else if event == 0x203 {
+		case 0x202, 0x400, 0x401: // WM_LBUTTONUP, NIN_SELECT, NIN_KEYSELECT
+			u.openChartSlot(0)
+		case 0x203: // WM_LBUTTONDBLCLK
+			u.dismissChart()
 			u.showDiagnostics()
 		}
 		return 0
@@ -1219,69 +983,42 @@ func (u *UI) windowProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintpt
 	case 0x0205: // WM_RBUTTONUP on taskbar bar
 		u.menu()
 		return 0
+	case 0x0021: // WM_MOUSEACTIVATE
+		return 3 // MA_NOACTIVATE
 	case 0x0201: // WM_LBUTTONDOWN
-		if !u.cfg.Locked {
-			u.hideTooltip()
-			var pt point
-			var rc rect
-			getCursor.Call(uintptr(unsafe.Pointer(&pt)))
-			getWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
-			u.dragOffsetX = pt.X - rc.Left
-			u.dragOffsetY = pt.Y - rc.Top
-			u.dragging = true
-			setCapture.Call(hwnd)
-		}
+		u.pressBar(hwnd, pointerFromMessage(lparam))
 		return 0
 	case 0x0200: // WM_MOUSEMOVE
-		if u.dragging {
-			var pt point
-			getCursor.Call(uintptr(unsafe.Pointer(&pt)))
-			setWindowPos.Call(hwnd, ^uintptr(0), uintptr(pt.X-u.dragOffsetX), uintptr(pt.Y-u.dragOffsetY), 0, 0, 0x1|0x10)
-			return 0
-		}
-		if !u.hoverTracking && !u.cfg.Locked {
-			tm := trackMouse{
-				Size:      uint32(unsafe.Sizeof(trackMouse{})),
-				Flags:     1 | 2, // TME_HOVER | TME_LEAVE
-				HwndTrack: hwnd,
-				HoverTime: 400,
-			}
-			trackMouseEvent.Call(uintptr(unsafe.Pointer(&tm)))
-			u.hoverTracking = true
-		}
-		return 0
-	case 0x02A1: // WM_MOUSEHOVER
-		if !u.dragging {
-			u.showTooltip()
-		}
+		u.barMouseMove(hwnd, pointerFromMessage(lparam))
 		return 0
 	case 0x02A3: // WM_MOUSELEAVE
-		u.hoverTracking = false
-		u.hideTooltip()
+		u.barMouseLeave()
 		return 0
 	case 0x0202: // WM_LBUTTONUP
-		if u.dragging {
-			u.dragging = false
-			releaseCapture.Call()
-			var rc rect
-			getWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&rc)))
-			x, y := int(rc.Left), int(rc.Top)
-			u.cfg.Placement = "manual"
-			u.cfg.X = &x
-			u.cfg.Y = &y
-			_ = config.Save(u.cfg)
-		}
+		u.releaseBar(hwnd, pointerFromMessage(lparam))
 		return 0
 	case 0x0215: // WM_CAPTURECHANGED
-		u.dragging = false
+		u.press = barPress{}
 		return 0
+	case 0x0047: // WM_WINDOWPOSCHANGED
+		if hwnd == u.hwnd {
+			u.syncBarInput()
+		}
+	case 0x0113: // WM_TIMER
+		if hwnd == u.hwnd && wparam == barHoverTimer {
+			u.barHoverTick(time.Now())
+			return 0
+		}
 	case 0x007E: // WM_DISPLAYCHANGE
-		x, y := u.initialPosition()
-		setWindowPos.Call(hwnd, ^uintptr(0), uintptr(x), uintptr(y), 0, 0, 0x1|0x10)
+		if hwnd == u.hwnd {
+			x, y := u.initialPosition()
+			setWindowPos.Call(hwnd, ^uintptr(0), uintptr(x), uintptr(y), 0, 0, 0x1|0x10)
+			invalidateRect.Call(hwnd, 0, 0)
+		}
 		return 0
 	case 0x02E0: // WM_DPICHANGED
 		dpi := uint32(wparam & 0xffff)
-		if dpi > 0 {
+		if hwnd == u.hwnd && dpi > 0 {
 			u.dpiScale = float64(dpi) / 96.0
 			u.recalcScale()
 			u.updateDimensions()
@@ -1289,16 +1026,21 @@ func (u *UI) windowProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintpt
 			if lparam != 0 {
 				var suggested rect
 				rtlMoveMemory.Call(uintptr(unsafe.Pointer(&suggested)), lparam, unsafe.Sizeof(suggested))
-				setWindowPos.Call(hwnd, ^uintptr(0), uintptr(suggested.Left), uintptr(suggested.Top), uintptr(u.width), uintptr(u.height), 0x10)
+				setWindowPos.Call(hwnd, ^uintptr(0), uintptr(suggested.Left), uintptr(suggested.Top), 0, 0, 0x1|0x10)
 			}
 			invalidateRect.Call(hwnd, 0, 0)
 		}
 		return 0
 	case 0x0010: // WM_CLOSE
+		if hwnd == u.hwnd {
+			u.dismissChart()
+		}
 		destroyWindow.Call(hwnd)
 		return 0
 	case 0x0002: // WM_DESTROY
-		postQuit.Call(0)
+		if hwnd == u.hwnd {
+			postQuit.Call(0)
+		}
 		return 0
 	}
 	r, _, _ := defWindowProc.Call(hwnd, uintptr(msg), wparam, lparam)
@@ -1321,37 +1063,27 @@ func (u *UI) Run(ctx context.Context, ready func()) error {
 	u.updateDimensions()
 
 	u.instance, _, _ = getModule.Call(0)
-	u.bgBrush, _, _ = createSolidBrush.Call(colorRef(1, 1, 1))
-	u.brushGreen, _, _ = createSolidBrush.Call(colorRef(0, 230, 118))
-	u.brushBlue, _, _ = createSolidBrush.Call(colorRef(56, 189, 248))
-	u.brushYellow, _, _ = createSolidBrush.Call(colorRef(245, 158, 11))
-	u.brushRed, _, _ = createSolidBrush.Call(colorRef(255, 23, 68))
-	u.brushGray, _, _ = createSolidBrush.Call(colorRef(148, 163, 184))
-	u.rebuildFonts()
-
-	defer func() {
-		for _, obj := range []uintptr{u.font, u.stockFont, u.capFont, u.bgBrush, u.brushGreen, u.brushBlue, u.brushYellow, u.brushRed, u.brushGray} {
-			if obj != 0 {
-				deleteObject.Call(obj)
-			}
-		}
-	}()
 
 	cursor, _, _ := loadCursor.Call(0, 32512)
 	u.callback = syscall.NewCallback(u.windowProc)
 	clsName := winapi.UTF16(winapi.WindowClass)
 	wc := windowClass{
-		Size:       uint32(unsafe.Sizeof(windowClass{})),
-		Procedure:  u.callback,
-		Instance:   u.instance,
-		Cursor:     cursor,
-		Background: u.bgBrush,
-		ClassName:  clsName,
+		Size:      uint32(unsafe.Sizeof(windowClass{})),
+		Procedure: u.callback,
+		Instance:  u.instance,
+		Cursor:    cursor,
+		ClassName: clsName,
 	}
 	if atom, _, err := registerClass.Call(uintptr(unsafe.Pointer(&wc))); atom == 0 {
 		return winapi.Error("RegisterClassExW", err)
 	}
 	defer unregisterClass.Call(uintptr(unsafe.Pointer(clsName)), u.instance)
+	auxClass := winapi.UTF16(overlayAuxClass)
+	wc.ClassName = auxClass
+	if atom, _, err := registerClass.Call(uintptr(unsafe.Pointer(&wc))); atom == 0 {
+		return winapi.Error("RegisterClassExW", err)
+	}
+	defer unregisterClass.Call(uintptr(unsafe.Pointer(auxClass)), u.instance)
 
 	x, y := u.initialPosition()
 	exStyle := uintptr(0x00080000 | 0x80 | 0x8 | 0x08000000) // WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE
@@ -1374,8 +1106,25 @@ func (u *UI) Run(ctx context.Context, ready func()) error {
 	defer destroyWindow.Call(hwnd)
 	defer u.closeCustomPanel()
 	defer u.closeFluentMenu()
-
-	setLayeredAttrs.Call(hwnd, colorRef(1, 1, 1), 255, 1) // LWA_COLORKEY = 1
+	defer u.dismissChart()
+	var cancelCharts context.CancelFunc
+	u.chartContext, cancelCharts = context.WithCancel(ctx)
+	defer cancelCharts()
+	if getDpiForWindow.Find() == nil {
+		if dpi, _, _ := getDpiForWindow.Call(hwnd); dpi > 0 && float64(dpi)/96 != u.dpiScale {
+			u.dpiScale = float64(dpi) / 96
+			u.recalcScale()
+			u.updateDimensions()
+			x, y = u.initialPosition()
+			setWindowPos.Call(hwnd, ^uintptr(0), uintptr(x), uintptr(y), 0, 0, 0x1|0x10)
+		}
+	}
+	u.rebuildFonts()
+	defer u.releaseFonts()
+	defer u.barBitmap.close()
+	if err := u.renderBar(); err != nil {
+		return err
+	}
 
 	taskbar := winapi.UTF16("TaskbarCreated")
 	r, _, _ := registerMessage.Call(uintptr(unsafe.Pointer(taskbar)))
@@ -1398,6 +1147,9 @@ func (u *UI) Run(ctx context.Context, ready func()) error {
 	}
 	u.initTooltip()
 	showWindow.Call(hwnd, 4) // SW_SHOWNOACTIVATE
+	if !u.cfg.Locked {
+		u.enableBarInput()
+	}
 
 	stop := context.AfterFunc(ctx, func() { postMessage.Call(hwnd, 0x0010, 0, 0) })
 	defer stop()

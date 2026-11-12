@@ -18,6 +18,212 @@ func Normalize(language string) string {
 
 func Valid(language string) bool { return language == Chinese || language == English }
 
+// Detail translates whole chart captions. Common short labels stay out of
+// the diagnostic text replacer, where they could alter unrelated text.
+func Detail(language, key string) string {
+	if Normalize(language) != English {
+		return key
+	}
+	switch key {
+	case "悬停取点 · 点击固定":
+		return "Hover to inspect · click to pin"
+	case "上次常规盘收盘":
+		return "Last regular close"
+	case "盘口与基本面":
+		return "Market data & fundamentals"
+	case "今开":
+		return "Open"
+	case "最高":
+		return "High"
+	case "最低":
+		return "Low"
+	case "前收":
+		return "Prev close"
+	case "成交量":
+		return "Volume"
+	case "成交额":
+		return "Turnover"
+	case "52 周区间":
+		return "52W range"
+	case "52 周区间取自腾讯日线":
+		return "52W range from Tencent daily bars"
+	case "日内振幅":
+		return "Day range %"
+	case "手":
+		return "lots"
+	case "常规盘盘口":
+		return "Regular-session data"
+	case "美元总市值":
+		return "Market cap (USD)"
+	case "预期市盈率":
+		return "Forward PE"
+	case "基本 EPS":
+		return "Basic EPS"
+	case "EPS 报告期":
+		return "EPS period"
+	case "东方财富":
+		return "East Money"
+	case "指数 PE":
+		return "Index PE"
+	case "指数 PB":
+		return "Index PB"
+	case "括号内为历史分位（最长近 10 年）":
+		return "Percentiles in parentheses (up to 10 years)"
+	case "跟踪标普 500 指数":
+		return "Tracks the S&P 500 Index"
+	case "跟踪纳斯达克 100 指数":
+		return "Tracks the Nasdaq-100 Index"
+	case "跟踪 NYSE Semiconductor Index":
+		return "Tracks the NYSE Semiconductor Index"
+	case "跟踪 MVIS US Listed Semiconductor 25 Index":
+		return "Tracks the MVIS US Listed Semiconductor 25 Index"
+	case "COMEX 黄金期货（腾讯报价）":
+		return "COMEX gold futures (Tencent quote)"
+	case "ICE 布伦特原油期货（腾讯报价）":
+		return "ICE Brent crude futures (Tencent quote)"
+	case "正在读取盘口…":
+		return "Loading market data…"
+	case "财报日期":
+		return "Earnings date"
+	case "下一期财报":
+		return "Next earnings"
+	case "最近实际披露":
+		return "Latest reported earnings"
+	case "最近财报日期":
+		return "Latest earnings date"
+	case "暂无可核实的财报日期":
+		return "Verified earnings date unavailable"
+	case "正在读取财报日期…":
+		return "Loading earnings date…"
+	case "仅日期":
+		return "date only"
+	case "预计":
+		return "estimated"
+	case "预约披露":
+		return "scheduled disclosure"
+	case "剩余 %d 天":
+		return "in %d days"
+	case "今日":
+		return "Today"
+	case "剩余 %s":
+		return "in %s"
+	case "关键宏观与议息节点":
+		return "Macro & rate decisions"
+	case "FOMC 利率决议":
+		return "FOMC rate decision"
+	case "FOMC 经济预测与点阵图":
+		return "FOMC projections & dot plot"
+	case "美联储主席新闻发布会":
+		return "Fed Chair press conference"
+	case "FOMC 会议纪要":
+		return "FOMC minutes"
+	case "非农就业":
+		return "nonfarm payrolls"
+	case "非农":
+		return "NFP"
+	case "失业率":
+		return "unemployment rate"
+	case "核心 CPI":
+		return "core CPI"
+	case "核心 PCE":
+		return "core PCE"
+	case "初请失业金":
+		return "initial jobless claims"
+	case "零售销售":
+		return "retail sales"
+	case "ISM 制造业 PMI":
+		return "ISM manufacturing PMI"
+	case "ISM 服务业 PMI":
+		return "ISM services PMI"
+	case "欧洲央行利率决议":
+		return "ECB rate decision"
+	case "欧洲央行存款利率":
+		return "ECB deposit facility rate"
+	case "日本央行利率决议":
+		return "BOJ rate decision"
+	case "韩国央行利率决议":
+		return "BOK rate decision"
+	case "一年期 LPR":
+		return "1-year China LPR"
+	case "五年期 LPR":
+		return "5-year China LPR"
+	case "制造业 PMI":
+		return "manufacturing PMI"
+	case "非制造业 PMI":
+		return "non-manufacturing PMI"
+	case "社会融资规模":
+		return "China aggregate financing"
+	case "EIA 原油库存":
+		return "EIA crude inventories"
+	case "OPEC+ 产油政策会议":
+		return "OPEC+ production policy meeting"
+	case "美国":
+		return "US"
+	case "中国":
+		return "China"
+	case "欧元区":
+		return "Euro area"
+	case "日本":
+		return "Japan"
+	case "韩国":
+		return "South Korea"
+	case "德国":
+		return "Germany"
+	case "法国":
+		return "France"
+	case "同比":
+		return "YoY"
+	case "环比":
+		return "MoM"
+	case "较上季":
+		return "QoQ"
+	case "实际":
+		return "Actual"
+	case "预期":
+		return "Forecast"
+	case "前值":
+		return "Prior"
+	case "实际值未提供":
+		return "Actual unavailable"
+	case "加息":
+		return "raised"
+	case "降息":
+		return "cut"
+	case "维持利率":
+		return "held"
+	case "下一次 %s":
+		return "Next %s"
+	case "正在读取宏观日历…":
+		return "Loading macro calendar…"
+	case "暂无匹配的高影响事件":
+		return "No matching high-impact events"
+	case "宏观日历暂不可用":
+		return "Macro calendar unavailable"
+	case "财报与关联资讯":
+		return "Earnings & related news"
+	case "正在读取关联资讯…":
+		return "Loading related news…"
+	case "暂无匹配的近期资讯":
+		return "No matching recent news"
+	case "资讯源暂不可用":
+		return "News feed unavailable"
+	case "议息":
+		return "Rates"
+	case "宏观":
+		return "Macro"
+	case "财报":
+		return "Earnings"
+	case "时政":
+		return "Policy"
+	case "公司":
+		return "Company"
+	case "市场":
+		return "Market"
+	default:
+		return Text(language, key)
+	}
+}
+
 var english = func() map[string]string {
 	entries := [][2]string{
 		{"采样", "sampling"},
@@ -64,6 +270,13 @@ var english = func() map[string]string {
 		{"暂无可核实的同指数历史来源", "Verified same-index history unavailable"},
 		{"未配置可核实的同指数历史来源", "No verified same-index history configured"},
 		{"尚未读取", "Not read yet"},
+		{"最后更新于%s", "Last updated %s"},
+		{"源未提供行情时间", "Quote time unavailable from source"},
+		{"正在读取分时数据…", "Loading intraday data…"},
+		{"暂无可核实的分时数据", "Verified intraday data unavailable"},
+		{"等待报价…", "Waiting for a quote…"},
+		{"等待市值排名", "Waiting for ranking"},
+		{"本次打开后采样", "Quotes sampled since opening"},
 		{"暂无数据", "Unavailable"},
 		{"有效样本", "valid samples"},
 		{"（含 DNS、建连、TLS、响应头）", " (DNS, connection, TLS and response headers included)"},
@@ -74,6 +287,7 @@ var english = func() map[string]string {
 		{"休市/周末(灰)", "Closed/weekend (gray)"},
 		{"语言 / Language", "Language / 语言"},
 		{"立即刷新 IP 与行情", "Refresh IP and quotes now"},
+		{"分时详情 · ", "Intraday chart · "},
 		{"任务栏显示实时网速与延迟", "Show network speed and latency"},
 		{"锁定位置（鼠标穿透）", "Lock position (click-through)"},
 		{"移到任务栏最左侧", "Move to the left of the taskbar"},

@@ -41,7 +41,7 @@ func TestLiveMenuPercentageBinding(t *testing.T) {
 				bySymbol[view.Symbol] = view
 			}
 			for _, group := range market.Groups {
-				cells := u.groupPercents(group.ID, time.Now())
+				cells := u.groupPercents(u.menuGroup(group.ID), time.Now())
 				for i, symbol := range group.Symbols {
 					view := bySymbol[symbol]
 					if view.Quote == nil || !view.SessionAvailable(time.Now()) {

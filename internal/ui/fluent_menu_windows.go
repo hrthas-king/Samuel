@@ -518,18 +518,23 @@ func (p *fluentPopup) draw(dc uintptr) {
 			font, textColor = v.heading, c.text
 		}
 		right := r.Right - v.px(30)
+		label := e.label
 		if e.groupID != "" {
 			if e.remove != 0 {
 				right = r.Right - v.px(44)
 			}
-			cells := p.menu.u.groupPercents(e.groupID, time.Now())
+			group := p.menu.u.menuGroup(e.groupID)
+			if group.ID == market.GroupTop2US {
+				label = groupLabel(p.menu.u.Language(), group)
+			}
+			cells := p.menu.u.groupPercents(group, time.Now())
 			start := right - v.px(172)
 			fluentText(dc, cells[0].text, rect{start, r.Top, start + v.px(80), r.Bottom}, font, p.menu.u.menuPercentColor(cells[0], c), 2)
 			fluentText(dc, "/", rect{start + v.px(80), r.Top, start + v.px(92), r.Bottom}, font, c.muted, 1)
 			fluentText(dc, cells[1].text, rect{start + v.px(92), r.Top, right, r.Bottom}, font, p.menu.u.menuPercentColor(cells[1], c), 2)
 			right = start - v.px(12)
 		}
-		fluentText(dc, e.label, rect{left, r.Top, right, r.Bottom}, font, textColor, 0)
+		fluentText(dc, label, rect{left, r.Top, right, r.Bottom}, font, textColor, 0)
 		if icon := fluentIcon(e); icon != "" && e.enabled {
 			fluentText(dc, icon, rect{v.px(14), r.Top, v.px(30), r.Bottom}, v.icons, textColor, 1)
 		}

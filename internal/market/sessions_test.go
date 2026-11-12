@@ -100,8 +100,7 @@ func TestCachedSessionExpiresAtTheBoundary(t *testing.T) {
 	if q == nil || yahooCachedSessionExpired(*q, before) || !yahooCachedSessionExpired(*q, before.Add(time.Second)) {
 		t.Fatal("cached premarket quote survived the regular-session boundary")
 	}
-	tracker := NewTracker()
-	tracker.SetGroup(GroupTop2US)
+	tracker := NewTrackerForSymbols([]string{"AAPL"})
 	tracker.ApplyBatch(batch, before)
 	for _, view := range tracker.Views(before.Add(time.Second), 1) {
 		if view.Symbol == "AAPL" && (view.Healthy || view.State != StateClosed || view.Quote.State != StateClosed || !strings.Contains(view.Reason, "时段已切换")) {
