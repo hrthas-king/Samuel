@@ -13,7 +13,7 @@ version = sys.argv[2]
 helper = bundle / "Contents/Helpers/SamuelData"
 app = bundle / "Contents/MacOS/Samuel"
 for binary in (app, helper):
-    subprocess.run(["lipo", "-verify_arch", "arm64", "x86_64", binary], check=True)
+    subprocess.run(["lipo", binary, "-verify_arch", "arm64", "x86_64"], check=True)
     result = subprocess.run([binary, "--version"], check=True, capture_output=True, text=True)
     assert result.stdout.strip() == f"{binary.name} {version}", result.stdout
 

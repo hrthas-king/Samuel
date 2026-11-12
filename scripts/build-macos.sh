@@ -33,7 +33,7 @@ done
 lipo -create "$work/Samuel-arm64" "$work/Samuel-x86_64" -output "$bundle/Contents/MacOS/Samuel"
 lipo -create "$work/SamuelData-arm64" "$work/SamuelData-x86_64" -output "$bundle/Contents/Helpers/SamuelData"
 for binary in "$bundle/Contents/MacOS/Samuel" "$bundle/Contents/Helpers/SamuelData"; do
-  lipo -verify_arch arm64 x86_64 "$binary"
+  lipo "$binary" -verify_arch arm64 x86_64
 done
 codesign --force --sign - "$bundle/Contents/Helpers/SamuelData"
 codesign --force --sign - "$bundle"
