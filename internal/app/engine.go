@@ -49,6 +49,7 @@ type Dependencies struct {
 	ReadCounters        func(string) (monitor.Counters, error)
 	Ping                func(string) monitor.Probe
 	MeasureLatency      func(context.Context) monitor.Latency
+	MeasureEgress       func(context.Context) (monitor.Latency, ipinfo.Info, error) // One HTTPS probe for latency and public IP.
 	FetchGeo            func(context.Context) (ipinfo.Info, error)
 	FetchQuotes         func(context.Context) (map[string]market.SymbolResult, error)
 	FetchTopUSCompanies func(context.Context) ([2]string, error)
@@ -123,8 +124,10 @@ type probeResult struct {
 }
 
 type latencyResult struct {
-	value monitor.Latency
-	epoch uint64
+	value  monitor.Latency
+	geo    ipinfo.Info
+	geoErr error
+	epoch  uint64
 }
 
 type geoResult struct {
@@ -307,7 +310,13 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 		}
 		refreshC = refreshTimer.C
 	}
-	requestGeo := func() { pending = true; armGeo() }
+	requestGeo := func() {
+		if e.deps.MeasureEgress != nil || e.deps.FetchGeo == nil {
+			return
+		}
+		pending = true
+		armGeo()
+	}
 
 	triggerTopUS := func() {
 		now := time.Now()
@@ -363,8 +372,23 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 		}()
 	}
 
+	applyGeo := func(info ipinfo.Info, err error) {
+		if err != nil {
+			snapshot.GeoError = err.Error()
+			return
+		}
+		lastHTTPSuccessAt = time.Now()
+		hadErr := snapshot.GeoError != ""
+		snapshot.Geo = info
+		snapshot.GeoError = ""
+		if hadErr {
+			quoteNextTry = time.Time{}
+			triggerQuoteFetch(true)
+		}
+	}
+
 	triggerLatency := func() {
-		if e.deps.MeasureLatency == nil || latencyBusy {
+		if latencyBusy || (e.deps.MeasureLatency == nil && e.deps.MeasureEgress == nil) {
 			return
 		}
 		latencyBusy = true
@@ -375,9 +399,14 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 		go func() {
 			defer workers.Done()
 			defer stop()
-			value := e.deps.MeasureLatency(lCtx)
+			result := latencyResult{epoch: ep}
+			if e.deps.MeasureEgress != nil {
+				result.value, result.geo, result.geoErr = e.deps.MeasureEgress(lCtx)
+			} else {
+				result.value = e.deps.MeasureLatency(lCtx)
+			}
 			select {
-			case latencies <- latencyResult{value, ep}:
+			case latencies <- result:
 			case <-ctx.Done():
 			}
 		}()
@@ -460,6 +489,9 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 			if r.value.Valid(time.Now()) {
 				lastHTTPSuccessAt = time.Now()
 			}
+			if e.deps.MeasureEgress != nil {
+				applyGeo(r.geo, r.geoErr)
+			}
 			emit()
 		case <-latencyTicker.C:
 			triggerLatency()
@@ -492,15 +524,17 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 			emit()
 		case <-e.Refresh:
 			invalidateLatency()
-			geoGeneration++
-			snapshot.Geo = ipinfo.Info{}
-			snapshot.GeoError = ""
-			if fetchCancel != nil {
-				fetchCancel()
+			if e.deps.MeasureEgress == nil {
+				geoGeneration++
+				snapshot.Geo = ipinfo.Info{}
+				snapshot.GeoError = ""
+				if fetchCancel != nil {
+					fetchCancel()
+				}
+				urgent = true
+				debounceUntil = time.Time{}
+				requestGeo()
 			}
-			urgent = true
-			debounceUntil = time.Time{}
-			requestGeo()
 			quoteNextTry = time.Time{}
 			if snapshot.MarketGroup == market.GroupTop2US {
 				topUSNextTry = time.Time{}
@@ -580,18 +614,7 @@ func (e *Engine) Run(ctx context.Context, seconds int, publish func(Snapshot)) {
 				fetchCancel = nil
 			}
 			if r.epoch == geoGeneration {
-				if r.err != nil {
-					snapshot.GeoError = r.err.Error()
-				} else {
-					lastHTTPSuccessAt = time.Now()
-					hadErr := snapshot.GeoError != ""
-					snapshot.Geo = r.value
-					snapshot.GeoError = ""
-					if hadErr {
-						quoteNextTry = time.Time{}
-						triggerQuoteFetch(true)
-					}
-				}
+				applyGeo(r.value, r.err)
 			}
 			armGeo()
 			emit()

@@ -11,6 +11,55 @@ import (
 	"github.com/hrthas-king/Samuel/internal/monitor"
 )
 
+func TestHTTPSProbeUpdatesPublicEgress(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), LatencyPoll+3*time.Second)
+	replies := make(chan ipinfo.Info, 1)
+	engine := New(Dependencies{
+		ReadCounters: func(string) (monitor.Counters, error) { return monitor.Counters{}, nil },
+		Ping: func(string) monitor.Probe {
+			return monitor.Probe{Success: true, Uplink: monitor.UplinkConfirmed, At: time.Now()}
+		},
+		MeasureEgress: func(ctx context.Context) (monitor.Latency, ipinfo.Info, error) {
+			select {
+			case geo := <-replies:
+				return monitor.Latency{
+					RTT: time.Millisecond, At: time.Now(), Method: "https", Target: "https://example.test/trace",
+				}, geo, nil
+			case <-ctx.Done():
+				return monitor.Latency{}, ipinfo.Info{}, ctx.Err()
+			}
+		},
+	})
+	snapshots := make(chan Snapshot, 16)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		engine.Run(ctx, 1, func(s Snapshot) {
+			select {
+			case snapshots <- s:
+			case <-ctx.Done():
+			}
+		})
+	}()
+	defer func() { cancel(); <-done }()
+	waitForEgress := func(ip, country string) {
+		t.Helper()
+		replies <- ipinfo.Info{IP: ip, Country: country, At: time.Now()}
+		for {
+			select {
+			case s := <-snapshots:
+				if s.Geo.IP == ip && s.Geo.Country == country && s.Latency.Valid(s.At) {
+					return
+				}
+			case <-ctx.Done():
+				t.Fatalf("public egress %s (%s) was not published with the HTTPS latency", ip, country)
+			}
+		}
+	}
+	waitForEgress("198.51.100.1", "US")
+	waitForEgress("203.0.113.2", "JP")
+}
+
 func TestEngineGeoAndQuotesAggregation(t *testing.T) {
 	defer market.SetActiveGroup(market.DefaultGroup)
 	market.SetActiveGroup(market.GroupVOOQQQ)
