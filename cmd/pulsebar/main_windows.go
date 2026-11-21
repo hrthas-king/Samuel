@@ -23,7 +23,7 @@ import (
 	"github.com/hrthas-king/Samuel/internal/winapi"
 )
 
-var version = "1.2.5"
+var version = "1.2.7"
 
 func main() {
 	diagnose := flag.Duration("diagnose", 0, "后台无窗口诊断持续时间，例如 10s")
