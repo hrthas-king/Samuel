@@ -9,6 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/hrthas-king/Samuel/internal/app"
@@ -18,10 +20,11 @@ import (
 	"github.com/hrthas-king/Samuel/internal/market"
 	"github.com/hrthas-king/Samuel/internal/network"
 	"github.com/hrthas-king/Samuel/internal/ui"
+	sentinel "github.com/hrthas-king/Samuel/internal/us_market_sentinel"
 	"github.com/hrthas-king/Samuel/internal/watchlist"
 )
 
-var version = "1.2.5"
+var version = "1.3.1"
 
 type command struct {
 	Action string `json:"action"`
@@ -54,14 +57,11 @@ type quote struct {
 }
 
 type chart struct {
-	Symbol  string                 `json:"symbol"`
-	Points  []market.IntradayPoint `json:"points"`
-	Offset  int                    `json:"offset"`
-	Base    float64                `json:"base"`
-	Digits  int                    `json:"digits"`
-	Loading bool                   `json:"loading"`
-	Sampled bool                   `json:"sampled"`
-	Detail  ui.DetailPresentation  `json:"detail"`
+	market.IntradaySeries
+	Symbol string                `json:"symbol"`
+	Base   float64               `json:"base"`
+	Digits int                   `json:"digits"`
+	Detail ui.DetailPresentation `json:"detail"`
 }
 
 type frame struct {
@@ -84,43 +84,21 @@ type frame struct {
 
 type activeChart struct {
 	symbol   string
-	query    market.IntradayQuery
-	remote   bool
+	history  market.IntradayHistory
 	provider string
-	points   []market.IntradayPoint
-	loading  bool
-	samples  market.IntradaySamples
 	detail   market.DetailData
 }
 
 func (c *activeChart) update(v market.View, lang string, now time.Time, start bool, intraday *market.IntradayClient, detail *market.DetailClient) *chart {
-	out := &chart{Symbol: c.symbol, Digits: market.PriceDecimals(v.Symbol), Points: []market.IntradayPoint{}}
+	out := &chart{Symbol: c.symbol, Digits: market.PriceDecimals(v.Symbol), IntradaySeries: c.history.Read(v, now, intraday)}
 	if q := v.Quote; q != nil {
 		provider := q.QuoteSource + "/" + q.QuoteType
 		start = start || provider != c.provider
 		c.provider = provider
 		out.Base = q.Previous()
-		_, out.Offset = market.QuoteMarketTime(*q).Zone()
-		query, remote := market.IntradayFor(*q)
-		if remote {
-			if start || !c.remote || query != c.query {
-				c.points, c.loading = intraday.Request(query)
-			} else if c.loading {
-				c.points, c.loading = intraday.Result(query)
-			}
-			out.Points = append(out.Points, c.points...)
-			out.Loading = c.loading
-		} else {
-			if c.remote {
-				c.samples = market.IntradaySamples{}
-			}
-			out.Points = append(out.Points, c.samples.Add(v, now)...)
-			out.Sampled = len(out.Points) >= 2
-		}
 		if !start {
 			c.detail = detail.ReadRegularHistory(*q, true, c.detail)
 		}
-		c.query, c.remote = query, remote
 	}
 	c.detail = detail.Read(v, ui.QuoteName(lang, v), lang, start, c.detail)
 	out.Detail = ui.PresentDetail(v, c.detail, lang, now)
@@ -189,6 +167,16 @@ func offer[T any](ch chan T, value T) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "sentinel" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		err := sentinel.Command(ctx, os.Args[2:], os.Stdout, os.Stderr)
+		stop()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -210,8 +198,8 @@ func run() error {
 	}
 	market.SetActiveGroup(cfg.MarketGroup)
 	engine := app.New(app.Dependencies{
-		ReadCounters: network.ReadCounters, Ping: network.Ping, MeasureLatency: network.MeasureLatency,
-		FetchGeo: ipinfo.Fetch, FetchQuotes: market.Fetch, FetchTopUSCompanies: market.FetchTopUSCompanies,
+		ReadCounters: network.ReadCounters, Ping: network.Ping, MeasureEgress: ipinfo.MeasureEgress,
+		FetchQuotes: market.Fetch, FetchTopUSCompanies: market.FetchTopUSCompanies,
 	})
 	snapshots := make(chan app.Snapshot, 1)
 	go engine.Run(ctx, cfg.IntervalSeconds, func(s app.Snapshot) { offer(snapshots, s) })
