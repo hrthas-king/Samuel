@@ -10,25 +10,30 @@ import (
 	"github.com/hrthas-king/Samuel/internal/market"
 )
 
-func TestNearestChartSampleUsesTimeSpacingAndEndpoints(t *testing.T) {
-	points := []market.IntradayPoint{{Time: 100, Price: 1}, {Time: 110, Price: 2}, {Time: 140, Price: 3}}
+func TestNearestChartSampleUsesFixedAxisAndSkipsEmptyHours(t *testing.T) {
+	// One pixel per minute. Real trades at 30, 40 and 100 minutes after 10:00.
+	window := market.IntradayWindow{Start: 1000, End: 1000 + 23*3600}
+	points := []market.IntradayPoint{{Time: 2800, Price: 1}, {Time: 3400, Price: 2}, {Time: 7000, Price: 3}}
 	for _, tt := range []struct {
 		x    int32
 		want int
-	}{{9, -1}, {10, 0}, {60, 1}, {135, 1}, {136, 2}, {210, 2}, {211, -1}} {
-		if got := nearestChartSample(points, 10, 210, tt.x); got != tt.want {
-			t.Errorf("sample at x=%d was %d, want %d", tt.x, got, tt.want)
+	}{
+		{-1, -1}, {0, -1}, {26, -1}, {29, 0}, {30, 0}, {35, 0}, {36, 1}, {40, 1}, {43, 1}, {44, -1},
+		{70, -1}, {97, 2}, {100, 2}, {110, -1}, {1380, -1}, {1381, -1},
+	} {
+		if got := nearestChartSample(window, points, 0, 1380, tt.x, 3); got != tt.want {
+			t.Errorf("x=%d: got %d, want %d", tt.x, got, tt.want)
 		}
 	}
-	if i := nearestChartSample(points[:1], 10, 210, 10); i != -1 {
-		t.Fatal("nonplottable series returned a point")
+	if got := nearestChartSample(window, points[:1], 0, 1380, 30, 3); got != 0 {
+		t.Fatal("a single real trade must be selectable")
 	}
 }
 
-func TestChartSampleUsesExchangeTimeAndQuotePrecision(t *testing.T) {
+func TestChartSampleUsesBeijingTimeAndQuotePrecision(t *testing.T) {
 	at := detailTime(t, "2026-11-06T21:20:00Z")
 	view := market.View{Symbol: "VOO", Quote: &market.Quote{Symbol: "VOO", Currency: "USD"}}
-	if got := chartSampleText(view, market.IntradayPoint{Time: at.Unix(), Price: 676.179}); got != "11-06 16:20 · 676.18 USD" {
+	if got := chartSampleText(view, market.IntradayPoint{Time: at.Unix(), Price: 676.179}); got != "11-07 05:20 · 676.18 USD" {
 		t.Fatalf("unexpected quote-point caption: %s", got)
 	}
 }
@@ -87,19 +92,20 @@ func TestChartUsesOnlyExchangeTime(t *testing.T) {
 
 func TestChartCoordinatesPreserveTimeAndReference(t *testing.T) {
 	points := []market.IntradayPoint{{Time: 10, Price: 100}, {Time: 20, Price: 105}, {Time: 50, Price: 102}}
-	line, base := chartCoordinates(points, 90, 10, 20, 210, 120)
-	if len(line) != 3 || line[0].X != 10 || line[1].X != 60 || line[2].X != 210 {
+	window := market.IntradayWindow{Start: 5, End: 55}
+	line, base := chartCoordinates(window, points, 90, 10, 20, 210, 120)
+	if len(line) != 3 || line[0].X != 30 || line[1].X != 70 || line[2].X != 190 {
 		t.Fatalf("chart X should be proportional to elapsed time: %+v", line)
 	}
 	if !(20 < line[1].Y && line[1].Y < line[2].Y && line[2].Y < line[0].Y && line[0].Y < base && base < 120) {
 		t.Fatalf("price normalization or baseline invalid: %v %v", line, base)
 	}
 	points[1].Price, points[2].Price = 100, 100
-	line, base = chartCoordinates(points, 100, 10, 20, 210, 120)
+	line, base = chartCoordinates(window, points, 100, 10, 20, 210, 120)
 	if line[0].Y != 70 || line[0].Y != line[2].Y || base != 70 {
 		t.Fatal("flat series should be centered", line, base)
 	}
-	if line, base := chartCoordinates(points[:1], 0, 10, 20, 210, 120); line != nil || base != -1 {
-		t.Fatal("short series is not drawable")
+	if line, base := chartCoordinates(window, nil, 0, 10, 20, 210, 120); line != nil || base != -1 {
+		t.Fatal("empty series is not drawable")
 	}
 }

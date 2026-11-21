@@ -140,7 +140,7 @@ func TestBarBitmapHasOnlyPremultipliedForeground(t *testing.T) {
 }
 
 func chartRenderFixture() (market.View, []market.IntradayPoint) {
-	at := time.Date(2026, 11, 6, 0, 59, 0, 0, time.UTC).Unix()
+	at := time.Date(2026, 11, 5, 22, 30, 0, 0, time.UTC).Unix()
 	q := &market.Quote{Symbol: "QQQ", Alias: "Invesco QQQ", Currency: "USD", Price: 647.05, ChangeAbs: -44.90,
 		ChangePercent: -6.49, State: market.StatePostMarket, TradeTime: at, ChangeBase: 691.95}
 	var points []market.IntradayPoint
@@ -154,6 +154,7 @@ func TestChartBitmapAtDPIAndUIScale(t *testing.T) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	view, points := chartRenderFixture()
+	window := market.BeijingIntradayWindow(time.Unix(view.Quote.TradeTime, 0))
 	for _, dpi := range []float64{1, 1.25, 1.5, 2} {
 		for _, pct := range []int{75, 100, 130} {
 			for _, language := range []string{locale.Chinese, locale.English} {
@@ -162,12 +163,12 @@ func TestChartBitmapAtDPIAndUIScale(t *testing.T) {
 					w, h := int32(math.Round(chartWidth*scale)), int32(math.Round(chartHeight*scale))
 					var raster chartRaster
 					defer raster.close()
-					if err := raster.render(w, h, scale, language, false, view, chartSeries{points: points}, nil); err != nil {
+					if err := raster.render(w, h, scale, language, false, view, market.IntradaySeries{Window: window, Points: points}, nil); err != nil {
 						t.Fatal(err)
 					}
 					pixel := func(x, y int32) uint32 { return raster.pixels[y*w+x] }
 					left, right := raster.px(22), w-raster.px(22)
-					top, bottom := raster.px(124), h-raster.px(chartCloseRow)-raster.px(34)
+					top, bottom := raster.px(124), h-raster.px(chartCloseRow)-raster.px(34+chartAxisRow)
 					color := changeColor(view.Quote.ChangePercent, false)
 					if pixel(0, 0) != chartBackground || pixel(w-1, h-1) != chartBackground {
 						t.Fatal("dark card surface did not stay inside its bounds")
@@ -190,14 +191,19 @@ func TestChartBitmapAtDPIAndUIScale(t *testing.T) {
 							}
 						}
 					}
-					line, _ := chartCoordinates(points, view.Quote.Previous(), float32(left), float32(top), float32(right), float32(bottom))
-					dotY := int32(math.Round(float64(line[len(line)-1].Y)))
-					if headerAccent == 0 || chartAccent < int(right-left)/2 || timePixels == 0 ||
-						pixel(right, dotY) != color || pixel(right+raster.px(6), dotY) == chartBackground {
-						t.Fatalf("missing chart components: change=%d line=%d time=%d dot=%x halo=%x",
-							headerAccent, chartAccent, timePixels, pixel(right, dotY), pixel(right+raster.px(6), dotY))
+					line, _ := chartCoordinates(window, points, view.Quote.Previous(), float32(left), float32(top), float32(right), float32(bottom))
+					last := line[len(line)-1]
+					dotX, dotY := int32(math.Round(float64(last.X))), int32(math.Round(float64(last.Y)))
+					lineWidth := last.X - line[0].X
+					if headerAccent == 0 || chartAccent < int(lineWidth)/2 || timePixels == 0 ||
+						pixel(dotX, dotY) != color || pixel(dotX+raster.px(6), dotY) == chartBackground || pixel(right, dotY) == color {
+						t.Fatalf("missing or misplaced chart: change=%d line=%d time=%d dot=%x", headerAccent, chartAccent, timePixels, pixel(dotX, dotY))
 					}
-					near, far := pixel(left+raster.px(9), top+(bottom-top)/3), pixel(left+raster.px(9), bottom-raster.px(6))
+					shadeX := int32(math.Round(float64(line[1].X)))
+					near, far := pixel(shadeX, top+(bottom-top)/3), pixel(shadeX, bottom-raster.px(6))
+					if pixel(left+raster.px(9), top+(bottom-top)/3) != chartBackground || pixel(right-raster.px(9), top+(bottom-top)/3) != chartBackground {
+						t.Fatal("unobserved hours received a price or gradient")
+					}
 					if byte(near>>16) <= byte(far>>16) || byte(far>>16) < (chartBackground>>16)&255 {
 						t.Fatalf("chart shade does not fade vertically: near=%#x far=%#x", near, far)
 					}
@@ -205,7 +211,7 @@ func TestChartBitmapAtDPIAndUIScale(t *testing.T) {
 						saveChartPreview(t, "flyout-"+language, &raster.dibSurface, w)
 					}
 					for _, loading := range []bool{true, false} {
-						if err := raster.render(w, h, scale, language, true, view, chartSeries{loading: loading}, nil); err != nil {
+						if err := raster.render(w, h, scale, language, true, view, market.IntradaySeries{Window: window, Loading: loading}, nil); err != nil {
 							t.Fatal(err)
 						}
 						status, greenChange := false, false

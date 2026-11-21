@@ -52,14 +52,19 @@ func chartSession(state market.SessionState) string {
 
 type chartPoint struct{ X, Y float32 }
 
-func nearestChartSample(points []market.IntradayPoint, left, right, x int32) int {
-	if len(points) < 2 || left >= right || x < left || x > right || points[0].Time >= points[len(points)-1].Time {
+func nearestChartSample(window market.IntradayWindow, points []market.IntradayPoint, left, right, x, tolerance int32) int {
+	if len(points) == 0 || left >= right || x < left || x > right || window.End <= window.Start {
 		return -1
 	}
-	target := float64(points[0].Time) + float64(points[len(points)-1].Time-points[0].Time)*float64(x-left)/float64(right-left)
+	secondsPerPixel := float64(window.End-window.Start) / float64(right-left)
+	target := float64(window.Start) + float64(x-left)*secondsPerPixel
 	i := sort.Search(len(points), func(i int) bool { return float64(points[i].Time) >= target })
+	gap := i == 0 || i == len(points) || points[i].Time-points[i-1].Time > market.IntradayGapSeconds
 	if i == len(points) || (i > 0 && target-float64(points[i-1].Time) <= float64(points[i].Time)-target) {
 		i--
+	}
+	if gap && math.Abs(float64(points[i].Time)-target) > float64(tolerance)*secondsPerPixel {
+		return -1
 	}
 	return i
 }
@@ -80,8 +85,7 @@ func chartSampleText(view market.View, sample market.IntradayPoint) string {
 	if view.Quote != nil {
 		q = *view.Quote
 	}
-	q.TradeTime = sample.Time
-	label := fmt.Sprintf("%s · %.*f", market.QuoteMarketTime(q).Format("01-02 15:04"), market.PriceDecimals(q.Symbol), sample.Price)
+	label := fmt.Sprintf("%s · %.*f", market.BeijingTime(sample.Time).Format("01-02 15:04"), market.PriceDecimals(q.Symbol), sample.Price)
 	if q.Currency != "" {
 		label += " " + q.Currency
 	}
@@ -104,8 +108,8 @@ func chartSampleChange(price, base float64) (float64, bool) {
 
 // The time axis uses actual elapsed time, so missing minutes and breaks
 // occupy their original width. Include the change reference in the Y domain.
-func chartCoordinates(points []market.IntradayPoint, base float64, left, top, right, bottom float32) ([]chartPoint, float32) {
-	if len(points) < 2 || points[0].Time >= points[len(points)-1].Time || left >= right || top >= bottom {
+func chartCoordinates(window market.IntradayWindow, points []market.IntradayPoint, base float64, left, top, right, bottom float32) ([]chartPoint, float32) {
+	if len(points) == 0 || !window.Contains(points[0].Time) || !window.Contains(points[len(points)-1].Time) || left >= right || top >= bottom {
 		return nil, -1
 	}
 	lo, hi := math.Inf(1), 0.0
@@ -123,11 +127,9 @@ func chartCoordinates(points []market.IntradayPoint, base float64, left, top, ri
 		}
 		return top + (bottom-top)*float32(.08+.84*fraction)
 	}
-	first := points[0].Time
-	duration := float64(points[len(points)-1].Time - first)
 	line := make([]chartPoint, len(points))
 	for i, p := range points {
-		line[i] = chartPoint{left + (right-left)*float32(float64(p.Time-first)/duration), y(p.Price)}
+		line[i] = chartPoint{left + (right-left)*float32(window.Fraction(p.Time)), y(p.Price)}
 	}
 	baseline := float32(-1)
 	if hasBase {

@@ -205,7 +205,7 @@ type chartMarker struct {
 	label string
 }
 
-func chartMarkers(events []market.MacroEvent, points []market.IntradayPoint, plot rect, gap int32, lang string) []chartMarker {
+func chartMarkers(events []market.MacroEvent, window market.IntradayWindow, plot rect, gap int32, lang string) []chartMarker {
 	var marks []chartMarker
 	for _, e := range events {
 		short := ""
@@ -233,7 +233,7 @@ func chartMarkers(events []market.MacroEvent, points []market.IntradayPoint, plo
 		case market.MacroGDP:
 			short = "GDP"
 		}
-		x, in := chartEventX(e.At, points, float32(plot.Left), float32(plot.Right))
+		x, in := chartEventX(e.At, window, float32(plot.Left), float32(plot.Right))
 		if short == "" || !in {
 			continue
 		}

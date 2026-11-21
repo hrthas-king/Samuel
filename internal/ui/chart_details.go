@@ -259,14 +259,10 @@ func chartMacroText(event market.MacroEvent, lang string, now time.Time) (string
 	return when, strings.Join(values, "  ·  "), published
 }
 
-func chartEventX(at time.Time, points []market.IntradayPoint, left, right float32) (float32, bool) {
-	if len(points) < 2 || right <= left {
-		return 0, false
-	}
-	start, end := points[0].Time, points[len(points)-1].Time
+func chartEventX(at time.Time, window market.IntradayWindow, left, right float32) (float32, bool) {
 	stamp := at.Unix()
-	if start >= end || stamp < start || stamp > end {
+	if right <= left || !window.Contains(stamp) {
 		return 0, false
 	}
-	return left + (right-left)*float32(float64(stamp-start)/float64(end-start)), true
+	return left + (right-left)*float32(window.Fraction(stamp)), true
 }

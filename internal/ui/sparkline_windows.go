@@ -71,7 +71,7 @@ func chartStroke(line []chartPoint, radius float64) []chartPoint {
 	return outline
 }
 
-func drawSparkline(d *dibSurface, bounds rect, line []chartPoint, baseline float32, color uint32, scale float64, selected *chartPoint) bool {
+func drawSparkline(d *dibSurface, bounds rect, line []chartPoint, breaks []int, baseline float32, color uint32, scale float64, selected *chartPoint) bool {
 	var image uintptr
 	status, _, _ := gdipCreateBitmap.Call(uintptr(d.width), uintptr(d.height), uintptr(d.width*4), 0xE200B, // PixelFormat32bppPARGB
 		uintptr(unsafe.Pointer(&d.pixels[0])), uintptr(unsafe.Pointer(&image)))
@@ -118,11 +118,7 @@ func drawSparkline(d *dibSurface, bounds rect, line []chartPoint, baseline float
 	status, _, _ = gdipLinear.Call(uintptr(unsafe.Pointer(&from)), uintptr(unsafe.Pointer(&to)),
 		uintptr(0x40000000|rgb), uintptr(rgb), 2, uintptr(unsafe.Pointer(&shade))) // WrapModeTileFlipY
 	if status == 0 {
-		area := make([]chartPoint, 0, len(line)+2)
-		area = append(area, line...)
-		area = append(area, chartPoint{last.X, float32(bounds.Bottom)}, chartPoint{line[0].X, float32(bounds.Bottom)})
-		fillChartPolygon(graphics, shade, area)
-		gdipDeleteBrush.Call(shade)
+		defer gdipDeleteBrush.Call(shade)
 	}
 	if selected != nil {
 		gdipSolidColor.Call(solid, 0xFF637C96)
@@ -133,13 +129,32 @@ func drawSparkline(d *dibSurface, bounds rect, line []chartPoint, baseline float
 		}
 		gdipRects.Call(graphics, solid, uintptr(unsafe.Pointer(&dashes[0])), uintptr(len(dashes)))
 	}
-	gdipSolidColor.Call(solid, uintptr(color))
-	fillChartPolygon(graphics, solid, chartStroke(line, 1.05*scale))
 	dot := func(p chartPoint, radius float64, tint uint32) {
 		x, y := int32(math.Round(float64(p.X))), int32(math.Round(float64(p.Y)))
 		r := max(1, int32(math.Round(radius*scale)))
 		gdipSolidColor.Call(solid, uintptr(tint))
 		gdipEllipse.Call(graphics, solid, uintptr(x-r), uintptr(y-r), uintptr(2*r), uintptr(2*r))
+	}
+	start := 0
+	for i := 0; i <= len(breaks); i++ {
+		end := len(line)
+		if i < len(breaks) {
+			end = breaks[i]
+		}
+		run := line[start:end]
+		start = end
+		if len(run) == 1 {
+			dot(run[0], 1.6, color)
+			continue
+		}
+		if shade != 0 {
+			area := make([]chartPoint, 0, len(run)+2)
+			area = append(area, run...)
+			area = append(area, chartPoint{run[len(run)-1].X, float32(bounds.Bottom)}, chartPoint{run[0].X, float32(bounds.Bottom)})
+			fillChartPolygon(graphics, shade, area)
+		}
+		gdipSolidColor.Call(solid, uintptr(color))
+		fillChartPolygon(graphics, solid, chartStroke(run, 1.05*scale))
 	}
 	dot(last, 10, 0x0C000000|rgb)
 	dot(last, 8, 0x14000000|rgb)

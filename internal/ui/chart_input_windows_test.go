@@ -4,6 +4,7 @@ package ui
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +13,7 @@ import (
 	"unsafe"
 
 	"github.com/hrthas-king/Samuel/internal/config"
+	"github.com/hrthas-king/Samuel/internal/market"
 	"github.com/hrthas-king/Samuel/internal/winapi"
 )
 
@@ -111,7 +113,7 @@ func TestVisibleChartInputAndResources(t *testing.T) {
 				t.Fatal("click on a transparent part of the quote did not open the card")
 			}
 			r := &u.chart.raster
-			if err := r.render(r.width, r.height, r.scale, u.Language(), false, view, chartSeries{points: points}, nil); err != nil {
+			if err := r.render(r.width, r.height, r.scale, u.Language(), false, view, market.IntradaySeries{Window: market.BeijingIntradayWindow(time.Unix(view.Quote.TradeTime, 0)), Points: points}, nil); err != nil {
 				t.Fatal(err)
 			}
 			sendMessage.Call(u.chart.hwnd, 0x0100, 27, 0)
@@ -143,10 +145,10 @@ func TestVisibleChartInputAndResources(t *testing.T) {
 		c.view, c.series, c.detail = detailView, detailSeries, detail.data
 		u.paintChartFrame()
 		plot := c.raster.plot
-		samplePoint := point{plot.Left + (plot.Right-plot.Left)/3, (plot.Top + plot.Bottom) / 2}
+		samplePoint := point{plot.Left + int32(math.Round(detailSeries.Window.Fraction(detailSeries.Points[2].Time)*float64(plot.Right-plot.Left))), (plot.Top + plot.Bottom) / 2}
 		sampleParam := uintptr(uint32(uint16(samplePoint.X)) | uint32(uint16(samplePoint.Y))<<16)
-		wantStamp := detailSeries.points[2].Time
-		if stamp := c.raster.sampleAt(samplePoint, c.series.points); stamp != wantStamp {
+		wantStamp := detailSeries.Points[2].Time
+		if stamp := c.raster.sampleAt(samplePoint, c.series.Points); stamp != wantStamp {
 			t.Fatalf("plot hit returned %d, want %d", stamp, wantStamp)
 		}
 		sendMessage.Call(c.hwnd, 0x0200, 0, sampleParam)

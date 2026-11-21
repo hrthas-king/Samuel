@@ -36,26 +36,21 @@ func TestChartMacroReleaseStatesAndCountdown(t *testing.T) {
 	}
 }
 
-func TestChartMacroAnchorRespectsPremarketAndRegularTimeAxes(t *testing.T) {
-	at := detailTime(t, "2026-11-06T13:30:00Z")
-	points := []market.IntradayPoint{
-		{Time: at.Add(-4 * time.Hour).Unix(), Price: 100}, {Time: at.Add(time.Hour).Unix(), Price: 110},
-	}
-	if x, ok := chartEventX(at, points, 10, 210); !ok || x != 170 {
-		t.Fatalf("pre-market event mapped to %f, ok %v", x, ok)
-	}
-	if x, ok := chartEventX(time.Unix(points[1].Time, 0), points, 10, 210); !ok || x != 210 {
-		t.Fatalf("last tick boundary: %f %v", x, ok)
-	}
-	points[0].Time, points[1].Time = at.Add(time.Hour).Unix(), at.Add(7*time.Hour).Unix()
-	if _, ok := chartEventX(at, points, 10, 210); ok {
-		t.Fatal("premarket release got a marker on the regular-session axis")
-	}
-	if x, ok := chartEventX(at.Add(3*time.Hour), points, 10, 190); !ok || x != 70 {
-		t.Fatalf("regular-session marker: %f %v", x, ok)
-	}
-	if _, ok := chartEventX(at.Add(7*time.Hour+time.Second), points, 10, 190); ok {
-		t.Fatal("out-of-range event plotted on the chart")
+func TestChartEventOnFullBeijingAxis(t *testing.T) {
+	at := detailTime(t, "2026-12-07T02:00:00Z")
+	window := market.BeijingIntradayWindow(at)
+	// 10 pixels per hour, including a premarket event and next-day 09:00.
+	for _, c := range []struct {
+		offset time.Duration
+		x      float32
+		in     bool
+	}{
+		{-time.Second, 0, false}, {0, 10, true}, {2 * time.Hour, 30, true},
+		{14 * time.Hour, 150, true}, {23 * time.Hour, 240, true}, {23*time.Hour + time.Second, 0, false},
+	} {
+		if x, ok := chartEventX(at.Add(c.offset), window, 10, 240); ok != c.in || x != c.x {
+			t.Errorf("at %s: (%v,%v), want (%v,%v)", c.offset, x, ok, c.x, c.in)
+		}
 	}
 }
 

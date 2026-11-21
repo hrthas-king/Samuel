@@ -37,10 +37,8 @@ type chartFlyout struct {
 	leaveAt                              time.Time
 	raster                               chartRaster
 	client                               *market.IntradayClient
-	query                                market.IntradayQuery
-	queryValid                           bool
-	series                               chartSeries
-	samples                              market.IntradaySamples
+	history                              market.IntradayHistory
+	series                               market.IntradaySeries
 	dwmCorners                           bool
 	detailClient                         *market.DetailClient
 	detail                               market.DetailData
@@ -143,7 +141,6 @@ func (u *UI) hideChart() {
 		destroyWindow.Call(hwnd)
 		c.raster.close()
 		c.symbol, c.bounds, c.leaveAt = "", rect{}, time.Time{}
-		c.queryValid, c.series, c.samples = false, chartSeries{}, market.IntradaySamples{}
 		c.clearDetail()
 	}
 	u.syncHoverTimer()
@@ -153,6 +150,7 @@ func (c *chartFlyout) clearDetail() {
 	if c.scrollTimer && c.hwnd != 0 {
 		killTimer.Call(c.hwnd, chartScrollTimer)
 	}
+	c.history, c.series = market.IntradayHistory{}, market.IntradaySeries{}
 	c.detail, c.detailAsked, c.view = market.DetailData{}, false, market.View{}
 	c.chartActivation = chartActivation{}
 	c.clickArmed, c.pointerPressed = false, false
@@ -223,26 +221,7 @@ func (u *UI) refreshChart(activate bool) {
 		market.QuoteMarketTime(*previous).Format("2006-01-02") != market.QuoteMarketTime(*q).Format("2006-01-02")) {
 		c.detail = c.detailClient.ReadRegularHistory(*q, true, c.detail)
 	}
-	var query market.IntradayQuery
-	var remote bool
-	if view.Quote != nil {
-		query, remote = market.IntradayFor(*view.Quote)
-	}
-	if remote {
-		if activate || !c.queryValid || query != c.query {
-			if c.queryValid && query != c.query {
-				c.selected = 0
-			}
-			c.query, c.queryValid = query, true
-			c.series = chartSeries{}
-			c.series.points, c.series.loading = c.client.Request(query)
-			c.samples = market.IntradaySamples{}
-		}
-	} else {
-		c.queryValid = false
-		points := c.samples.Add(view, time.Now())
-		c.series = chartSeries{points: points, sampled: len(points) >= 2}
-	}
+	c.series = c.history.Read(view, time.Now(), c.client)
 
 	if c.screenAnchor != nil {
 		at := *c.screenAnchor
@@ -283,7 +262,7 @@ func (u *UI) paintChartFrame() {
 	c := u.chart
 	var client rect
 	fluentGetClient.Call(c.hwnd, uintptr(unsafe.Pointer(&client)))
-	if c.selected != 0 && chartSampleIndex(c.series.points, c.selected) < 0 {
+	if c.selected != 0 && chartSampleIndex(c.series.Points, c.selected) < 0 {
 		c.selected = 0
 	}
 	extra := chartExtras{data: c.detail, now: time.Now(), scroll: c.scroll, mouse: c.mouse, selected: c.selected}
@@ -300,9 +279,6 @@ func (u *UI) chartReady() {
 		return
 	}
 	c := u.chart
-	if c.queryValid && c.series.loading {
-		c.series.points, c.series.loading = c.client.Result(c.query)
-	}
 	c.detail = c.detailClient.Read(c.view, quoteName(u.Language(), c.view), u.Language(), false, c.detail)
 	u.refreshChart(false)
 }
@@ -344,7 +320,7 @@ func (u *UI) setChartCursor() {
 	id := uintptr(32512) // IDC_ARROW
 	if c.raster.linkAt(c.mouse) != "" {
 		id = 32649 // IDC_HAND
-	} else if c.raster.sampleAt(c.mouse, c.series.points) != 0 {
+	} else if c.raster.sampleAt(c.mouse, c.series.Points) != 0 {
 		id = 32515 // IDC_CROSS
 	}
 	cursor, _, _ := loadCursor.Call(0, id)
@@ -382,20 +358,20 @@ func (u *UI) chartWindowProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) u
 		}
 	case 0x0200: // WM_MOUSEMOVE
 		before := c.raster.linkAt(c.mouse)
-		sample := c.raster.sampleAt(c.mouse, c.series.points)
+		sample := c.raster.sampleAt(c.mouse, c.series.Points)
 		c.mouse = pointerFromMessage(lparam)
 		if !c.mouseTracking {
 			tm := trackMouse{Size: uint32(unsafe.Sizeof(trackMouse{})), Flags: 2, HwndTrack: hwnd}
 			ok, _, _ := trackMouseEvent.Call(uintptr(unsafe.Pointer(&tm)))
 			c.mouseTracking = ok != 0
 		}
-		if before != c.raster.linkAt(c.mouse) || (c.selected == 0 && sample != c.raster.sampleAt(c.mouse, c.series.points)) {
+		if before != c.raster.linkAt(c.mouse) || (c.selected == 0 && sample != c.raster.sampleAt(c.mouse, c.series.Points)) {
 			u.paintChartFrame()
 		}
 		u.setChartCursor()
 		return 0
 	case 0x02A3: // WM_MOUSELEAVE
-		highlighted := c.raster.linkAt(c.mouse) != "" || (c.selected == 0 && c.raster.sampleAt(c.mouse, c.series.points) != 0)
+		highlighted := c.raster.linkAt(c.mouse) != "" || (c.selected == 0 && c.raster.sampleAt(c.mouse, c.series.Points) != 0)
 		c.mouse, c.mouseTracking, c.pressedLink = point{-1, -1}, false, ""
 		c.pressedPlot = false
 		if highlighted {
@@ -403,18 +379,18 @@ func (u *UI) chartWindowProc(hwnd uintptr, msg uint32, wparam, lparam uintptr) u
 		}
 		return 0
 	case 0x0020: // WM_SETCURSOR
-		if lparam&0xffff == 1 && (c.raster.linkAt(c.mouse) != "" || c.raster.sampleAt(c.mouse, c.series.points) != 0) {
+		if lparam&0xffff == 1 && (c.raster.linkAt(c.mouse) != "" || c.raster.sampleAt(c.mouse, c.series.Points) != 0) {
 			u.setChartCursor()
 			return 1
 		}
 	case 0x0201: // WM_LBUTTONDOWN
 		p := pointerFromMessage(lparam)
 		c.pressedLink = c.raster.linkAt(p)
-		c.pressedPlot = c.raster.sampleAt(p, c.series.points) != 0
+		c.pressedPlot = c.raster.sampleAt(p, c.series.Points) != 0
 		return 0
 	case 0x0202: // WM_LBUTTONUP
 		p := pointerFromMessage(lparam)
-		if stamp := c.raster.sampleAt(p, c.series.points); c.pressedPlot && stamp != 0 {
+		if stamp := c.raster.sampleAt(p, c.series.Points); c.pressedPlot && stamp != 0 {
 			if c.selected == stamp {
 				c.selected = 0
 			} else {

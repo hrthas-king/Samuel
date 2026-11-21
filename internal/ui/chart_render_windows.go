@@ -14,7 +14,8 @@ import (
 const (
 	chartWidth      = 468
 	chartCloseRow   = 22
-	chartHeight     = 252 + chartCloseRow
+	chartAxisRow    = 18
+	chartHeight     = 252 + chartCloseRow + chartAxisRow
 	chartBackground = 0xFF0D0F12
 	chartMuted      = 0xFF8E95A2
 	chartPriceSize  = 42
@@ -28,12 +29,8 @@ type chartRaster struct {
 	graphicsToken                         uintptr
 	scrollMax, offset                     int32
 	links                                 []chartLink
+	window                                market.IntradayWindow
 	plot                                  rect
-}
-
-type chartSeries struct {
-	points           []market.IntradayPoint
-	loading, sampled bool
 }
 
 func (r *chartRaster) releaseFonts() {
@@ -61,13 +58,13 @@ func (r *chartRaster) sampleAt(mouse point, points []market.IntradayPoint) int64
 	if mouse.Y < max(0, r.plot.Top) || mouse.Y >= min(r.height, r.plot.Bottom) {
 		return 0
 	}
-	if i := nearestChartSample(points, r.plot.Left, r.plot.Right, mouse.X); i >= 0 {
+	if i := nearestChartSample(r.window, points, r.plot.Left, r.plot.Right, mouse.X, r.px(3)); i >= 0 {
 		return points[i].Time
 	}
 	return 0
 }
 
-func (r *chartRaster) render(w, h int32, scale float64, language string, upIsRed bool, view market.View, series chartSeries, extra *chartExtras) error {
+func (r *chartRaster) render(w, h int32, scale float64, language string, upIsRed bool, view market.View, series market.IntradaySeries, extra *chartExtras) error {
 	if r.scale != scale {
 		r.releaseFonts()
 		r.scale = scale
@@ -89,7 +86,7 @@ func (r *chartRaster) render(w, h int32, scale float64, language string, upIsRed
 	var panel chartPanel
 	r.scrollMax, r.offset = 0, 0
 	r.links = r.links[:0]
-	r.plot = rect{}
+	r.window, r.plot = series.Window, rect{}
 	if extra != nil {
 		headerHeight = r.px(chartHeight)
 		panel = r.detailPanel(w, view, extra, language)
@@ -125,8 +122,8 @@ func (r *chartRaster) render(w, h int32, scale float64, language string, upIsRed
 			foot += "  ·  " + locale.Text(language, view.Reason)
 		}
 	}
-	if series.sampled {
-		foot = locale.Text(language, "本次打开后采样") + "  ·  " + foot
+	if series.Sampled {
+		foot = locale.Text(language, "含打开卡片后采样") + "  ·  " + foot
 	}
 	delta := textRun(change, r.change, color, rect{left, r.px(43), right, r.px(93)}, 2|ellipsis)
 	unit := textRun(currency, r.currency, 0xFFCBD5E1, rect{Top: r.px(62), Bottom: r.px(90)}, 0)
@@ -157,31 +154,31 @@ func (r *chartRaster) render(w, h int32, scale float64, language string, upIsRed
 		textRun(chartTimeText(language, q), r.detail, chartMuted, rect{left, r.px(96), right, r.px(115)}, ellipsis))
 
 	priceHeight := headerHeight - r.px(chartCloseRow)
-	plot := rect{left, r.px(124), right, priceHeight - r.px(34)}
+	plot := rect{left, r.px(124), right, priceHeight - r.px(34+chartAxisRow)}
 	visiblePlot := scrollRect(plot, r.offset)
 	inspection, inspectionPercent := "", ""
 	inspectionColor := uint32(chartMuted)
 	if visiblePlot.Bottom > 0 && visiblePlot.Top < h {
-		line, baseline := chartCoordinates(series.points, base, float32(visiblePlot.Left), float32(visiblePlot.Top), float32(visiblePlot.Right), float32(visiblePlot.Bottom))
+		line, baseline := chartCoordinates(series.Window, series.Points, base, float32(visiblePlot.Left), float32(visiblePlot.Top), float32(visiblePlot.Right), float32(visiblePlot.Bottom))
 		// A negative coordinate after scrolling still belongs to the plot.
 		// The renderer clips the baseline to the viewport below.
 		if len(line) > 0 && r.graphicsToken == 0 {
 			r.graphicsToken, _ = startChartGraphics()
 		}
-		marks := chartMarkers(panel.events, series.points, plot, r.px(52), language)
+		marks := chartMarkers(panel.events, series.Window, plot, r.px(52), language)
 		var selected *chartPoint
 		if len(line) > 0 && r.graphicsToken != 0 {
 			r.plot = visiblePlot
 			if extra != nil {
 				stamp := extra.selected
 				if stamp == 0 {
-					stamp = r.sampleAt(extra.mouse, series.points)
+					stamp = r.sampleAt(extra.mouse, series.Points)
 				}
-				if i := chartSampleIndex(series.points, stamp); i >= 0 {
+				if i := chartSampleIndex(series.Points, stamp); i >= 0 {
 					selected = &line[i]
-					inspection = chartSampleText(view, series.points[i])
+					inspection = chartSampleText(view, series.Points[i])
 					inspectionPercent = "--%"
-					if pct, ok := chartSampleChange(series.points[i].Price, base); ok {
+					if pct, ok := chartSampleChange(series.Points[i].Price, base); ok {
 						inspectionPercent = fmt.Sprintf("%+.2f%%", pct)
 						inspectionColor = changeColor(pct, upIsRed)
 					}
@@ -196,10 +193,10 @@ func (r *chartRaster) render(w, h int32, scale float64, language string, upIsRed
 				}
 			}
 		}
-		if len(line) == 0 || r.graphicsToken == 0 || !drawSparkline(&r.dibSurface, visiblePlot, line, baseline, color, scale, selected) {
+		if len(line) == 0 || r.graphicsToken == 0 || !drawSparkline(&r.dibSurface, visiblePlot, line, series.Breaks, baseline, color, scale, selected) {
 			r.plot, inspection = rect{}, ""
-			status := "暂无可核实的分时数据"
-			if series.loading {
+			status := "此时段暂无可核实的分时数据"
+			if series.Loading {
 				status = "正在读取分时数据…"
 			} else if q == nil {
 				status = "等待报价…"
@@ -214,6 +211,12 @@ func (r *chartRaster) render(w, h int32, scale float64, language string, upIsRed
 			}
 		}
 	}
+	axis := rect{left, plot.Bottom + r.px(2), right, plot.Bottom + r.px(chartAxisRow+2)}
+	third := (right - left) / 3
+	runs = append(runs,
+		textRun(market.BeijingTime(series.Window.Start).Format("01-02 15:04"), r.detail, chartMuted, rect{left, axis.Top, left + third, axis.Bottom}, ellipsis),
+		textRun(locale.Text(language, "北京时间")+" (UTC+8)", r.detail, chartMuted, rect{left + third, axis.Top, right - third, axis.Bottom}, 1|ellipsis),
+		textRun(market.BeijingTime(series.Window.End).Format("01-02 15:04"), r.detail, chartMuted, rect{right - third, axis.Top, right, axis.Bottom}, 2|ellipsis))
 	footBounds := rect{left, priceHeight - r.px(29), right, priceHeight - r.px(10)}
 	if inspection != "" {
 		readout := textRun(inspection, r.detail, 0xFFC7D6E7, footBounds, 2|ellipsis)

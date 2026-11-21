@@ -13,13 +13,13 @@ import (
 	"github.com/hrthas-king/Samuel/internal/market"
 )
 
-func chartDetailFixture(t *testing.T) (market.View, chartSeries, chartExtras) {
+func chartDetailFixture(t *testing.T) (market.View, market.IntradaySeries, chartExtras) {
 	t.Helper()
 	now := detailTime(t, "2026-11-06T16:00:00Z")
 	q := &market.Quote{Symbol: "QQQ", Alias: "Invesco QQQ", Currency: "USD", Price: 647.05, ChangeAbs: -44.90, ChangePercent: -6.49,
 		QuoteType: "ETF", State: market.StateRegular, UpdateMode: "yahoo_regular", TradeTime: now.Unix(), RegularTradeTime: now.Unix(), ChangeBase: 691.95}
 	view := market.View{Symbol: q.Symbol, Quote: q, Healthy: true}
-	series := chartSeries{points: []market.IntradayPoint{
+	series := market.IntradaySeries{Window: market.BeijingIntradayWindow(now), Breaks: []int{1, 2, 3, 4}, Points: []market.IntradayPoint{
 		{Time: now.Add(-3 * time.Hour).Unix(), Price: 693.04}, {Time: now.Add(-150 * time.Minute).Unix(), Price: 683.02},
 		{Time: now.Add(-2 * time.Hour).Unix(), Price: 673.52}, {Time: now.Add(-time.Hour).Unix(), Price: 677.15},
 		{Time: now.Unix(), Price: 647.05},
@@ -75,8 +75,8 @@ func TestChartDetailsRenderAndScrollAtDPI(t *testing.T) {
 				if c := r.pixels[(top+r.px(7)+r.px(29))*r.width+left]; c != 0xFF12171E {
 					t.Fatalf("metric grid did not render, got %#x", c)
 				}
-				plot := rect{left, r.px(124), w - left, r.px(chartHeight) - r.px(chartCloseRow) - r.px(34)}
-				marks := chartMarkers(fixture.data.Calendar.Value, series.points, plot, r.px(52), language)
+				plot := rect{left, r.px(124), w - left, r.px(chartHeight) - r.px(chartCloseRow) - r.px(34+chartAxisRow)}
+				marks := chartMarkers(fixture.data.Calendar.Value, series.Window, plot, r.px(52), language)
 				if len(marks) != 1 {
 					t.Fatalf("expected a nonfarm anchor: %+v", marks)
 				}
@@ -98,11 +98,11 @@ func TestChartDetailsRenderAndScrollAtDPI(t *testing.T) {
 				if !coloredClose {
 					t.Fatal("last regular close change did not render below the plot")
 				}
-				extra.mouse = point{plot.Left + (plot.Right-plot.Left)/3, (plot.Top + plot.Bottom) / 2}
-				pct, _ := chartSampleChange(series.points[2].Price, view.Quote.Previous())
+				extra.mouse = point{plot.Left + int32(math.Round(series.Window.Fraction(series.Points[2].Time)*float64(plot.Right-plot.Left))), (plot.Top + plot.Bottom) / 2}
+				pct, _ := chartSampleChange(series.Points[2].Price, view.Quote.Previous())
 				for _, pinned := range []bool{false, true} {
 					if pinned {
-						extra.selected = series.points[2].Time
+						extra.selected = series.Points[2].Time
 						extra.mouse = point{-1, -1}
 					}
 					if err := r.render(w, h, dpi, language, false, view, series, &extra); err != nil {
