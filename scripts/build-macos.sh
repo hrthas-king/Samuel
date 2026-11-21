@@ -3,8 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 [[ "$(uname -s)" == Darwin ]] || { echo "Building Samuel.app requires macOS and Xcode Command Line Tools." >&2; exit 1; }
-version="${1:-1.2.5}"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Expected a numeric version such as 1.2.5." >&2; exit 1; }
+version="${1:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' macos/Info.plist)}"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Expected a numeric version such as 1.2.7." >&2; exit 1; }
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 bundle="$work/Samuel.app"
@@ -33,7 +33,11 @@ done
 lipo -create "$work/Samuel-arm64" "$work/Samuel-x86_64" -output "$bundle/Contents/MacOS/Samuel"
 lipo -create "$work/SamuelData-arm64" "$work/SamuelData-x86_64" -output "$bundle/Contents/Helpers/SamuelData"
 for binary in "$bundle/Contents/MacOS/Samuel" "$bundle/Contents/Helpers/SamuelData"; do
-  lipo "$binary" -verify_arch arm64 x86_64
+  read -r -a architectures <<< "$(lipo -archs "$binary")"
+  case "${architectures[*]}" in
+    "arm64 x86_64"|"x86_64 arm64") ;;
+    *) printf 'Expected arm64 and x86_64 in %s, found %s\n' "$binary" "${architectures[*]}" >&2; exit 1 ;;
+  esac
 done
 codesign --force --sign - "$bundle/Contents/Helpers/SamuelData"
 codesign --force --sign - "$bundle"
