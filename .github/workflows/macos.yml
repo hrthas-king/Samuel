@@ -41,7 +41,7 @@ jobs:
         env:
           RELEASE_REF: ${{ github.ref_name }}
         run: |
-          version=1.2.5
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' macos/Info.plist)"
           if [[ "$RELEASE_REF" == macos-v* ]]; then version="${RELEASE_REF#macos-v}"; fi
           bash scripts/build-macos.sh "$version"
           temp="$(mktemp -d)"
