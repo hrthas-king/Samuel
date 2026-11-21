@@ -1,6 +1,10 @@
 import Foundation
 import SwiftUI
 
+enum SamuelHelper {
+    static var url: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/SamuelData") }
+}
+
 struct MarketGroup: Decodable, Identifiable {
     let id: String
     let name: String
@@ -13,16 +17,6 @@ struct MarketQuote: Decodable, Identifiable {
     let healthy: Bool
     let source, notice: String
     var id: String { symbol }
-}
-
-struct PricePoint: Decodable, Identifiable {
-    let time: Int64
-    let price: Double
-    var id: Int64 { time }
-    enum CodingKeys: String, CodingKey {
-        case time = "Time"
-        case price = "Price"
-    }
 }
 
 struct Metric: Decodable {
@@ -56,7 +50,8 @@ struct Detail: Decodable {
 struct Intraday: Decodable {
     let symbol: String
     let points: [PricePoint]
-    let offset: Int
+    let window: ChartWindow
+    let breaks: [Int]
     let base: Double
     let digits: Int
     let loading, sampled: Bool
@@ -105,7 +100,7 @@ final class Feed: ObservableObject {
         buffer = Data()
         generation = UUID()
         let id = generation
-        let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/SamuelData")
+        let helper = SamuelHelper.url
         guard FileManager.default.isExecutableFile(atPath: helper.path) else {
             failed = true
             return

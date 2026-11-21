@@ -7,6 +7,7 @@ final class SamuelDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private let feed = Feed()
+    private let sentinel = SentinelStore()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let button = item.button else { return }
@@ -30,7 +31,7 @@ final class SamuelDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let work = button.window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
         let size = CGSize(width: min(484, (work?.width ?? 540) - 28),
                           height: min(592, (work?.height ?? 655) - 38))
-        let panel = Panel(feed: feed, size: size, close: { [weak self] in self?.popover.performClose(nil) },
+        let panel = Panel(feed: feed, sentinel: sentinel, size: size, close: { [weak self] in self?.popover.performClose(nil) },
                           quit: { NSApp.terminate(nil) })
         popover.contentSize = size
         popover.contentViewController = NSHostingController(rootView: panel)
@@ -45,6 +46,7 @@ final class SamuelDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        sentinel.stop()
         feed.stop()
         NSStatusBar.system.removeStatusItem(item)
     }
@@ -100,6 +102,11 @@ enum SamuelApp {
             guard let line = readLine(), let data = line.data(using: .utf8),
                   let state = try? JSONDecoder().decode(Frame.self, from: data),
                   state.groups.contains(where: { $0.id == state.group }) else { exit(1) }
+            return
+        }
+        if CommandLine.arguments.contains("--check-sentinel") {
+            let data = FileHandle.standardInput.readDataToEndOfFile()
+            guard (try? SentinelReport.decode(data)) != nil else { exit(1) }
             return
         }
         signal(SIGPIPE, SIG_IGN)

@@ -1,18 +1,30 @@
 import SwiftUI
 
+// The macOS 27 SDK also defines a State macro that requires full Xcode.
+// Keep using the SwiftUI property wrapper with the command line tools.
+typealias ViewState<Value> = State<Value>
+
 @MainActor
 struct Panel: View {
     @ObservedObject var feed: Feed
+    @ObservedObject var sentinel: SentinelStore
     let size: CGSize
     let close: () -> Void
     let quit: () -> Void
-    @State private var adding = false
-    @State private var first = ""
-    @State private var second = ""
+    @ViewState private var showingSettings = false
+    @ViewState private var showingSentinel = false
+    @ViewState private var editingResearch = false
+    @ViewState private var researchRevision = 0
+    @ViewState private var adding = false
+    @ViewState private var first = ""
+    @ViewState private var second = ""
 
     var body: some View {
         Group {
-            if let state = feed.frame, !feed.failed {
+            if showingSentinel {
+                SentinelView(store: sentinel, english: feed.frame?.language == "en", settingsRevision: researchRevision,
+                             openSettings: { editingResearch = true }) { showingSentinel = false }
+            } else if let state = feed.frame, !feed.failed {
                 content(state)
             } else {
                 VStack(spacing: 14) {
@@ -20,13 +32,25 @@ struct Panel: View {
                     Text(feed.failed ? "行情服务未启动 / Data service unavailable" : "正在连接行情 / Connecting")
                         .foregroundStyle(.secondary)
                     if feed.failed { Button("重试 / Retry") { feed.start() } }
+                    Button("美股宏观 / Macro Sentinel") { showingSentinel = true }
                     Button("退出 Samuel / Quit Samuel", action: quit)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(width: size.width, height: size.height)
-        .onExitCommand(perform: close)
+        .disabled(editingResearch)
+        .accessibilityHidden(editingResearch)
+        .overlay {
+            if editingResearch {
+                SentinelSettingsView(english: feed.frame?.language == "en", back: { editingResearch = false },
+                                     saved: { editingResearch = false; researchRevision += 1 })
+                    .frame(width: size.width, height: size.height).background(Color(nsColor: .windowBackgroundColor))
+            }
+        }
+        .onExitCommand {
+            if editingResearch { editingResearch = false } else if showingSentinel { showingSentinel = false } else { close() }
+        }
     }
 
     private func content(_ state: Frame) -> some View {
@@ -47,10 +71,25 @@ struct Panel: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .help(state.tr("刷新行情", "Refresh quotes"))
-                settings(state)
+                Button { showingSentinel = true } label: {
+                    Label(state.tr("宏观", "Macro"), systemImage: "gauge.with.dots.needle.50percent")
+                }
+                .help(state.tr("美股宏观情绪与择时", "US Market Macro Sentinel"))
+                Button {
+                    showingSettings.toggle()
+                } label: {
+                    Image(systemName: showingSettings ? "gearshape.fill" : "gearshape")
+                }
+                .help(state.tr("设置", "Settings"))
+                .accessibilityLabel(state.tr("设置", "Settings"))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            if showingSettings {
+                settings(state)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+            }
             if adding {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
@@ -99,39 +138,63 @@ struct Panel: View {
     }
 
     private func settings(_ state: Frame) -> some View {
-        Menu {
-            Menu(state.tr("界面语言", "Language")) {
-                Button("简体中文") { feed.send("language", value: "zh") }
-                Button("English") { feed.send("language", value: "en") }
+        let language = state.tr("界面语言", "Language")
+        let interval = state.tr("刷新间隔", "Refresh interval")
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(language).font(.caption).foregroundStyle(.secondary)
+                    Picker(language, selection: Binding(
+                        get: { state.language }, set: { feed.send("language", value: $0) }
+                    )) {
+                        Text("简体中文").tag("zh-CN")
+                        Text("English").tag("en")
+                    }
+                    .labelsHidden()
+                    .accessibilityLabel(language)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(interval).font(.caption).foregroundStyle(.secondary)
+                    Picker(interval, selection: Binding(
+                        get: { state.interval }, set: { feed.send("interval", number: $0) }
+                    )) {
+                        ForEach([1, 2, 5], id: \.self) { seconds in
+                            Text(state.tr("\(seconds) 秒", "\(seconds)s")).tag(seconds)
+                        }
+                    }
+                    .labelsHidden()
+                    .accessibilityLabel(interval)
+                }
             }
-            Menu(state.tr("刷新频率", "Refresh interval")) {
-                ForEach([1, 2, 5], id: \.self) { seconds in
-                    Button("\(seconds)s" + (seconds == state.interval ? " ✓" : "")) {
-                        feed.send("interval", number: seconds)
+            .pickerStyle(.segmented)
+            HStack(spacing: 16) {
+                Toggle(state.tr("菜单栏显示网速", "Show network rates"), isOn: Binding(
+                    get: { state.showNet }, set: { feed.send("network", on: $0) }
+                ))
+                Toggle(state.tr("红涨绿跌", "Red for gains"), isOn: Binding(
+                    get: { state.upIsRed }, set: { feed.send("color", on: $0) }
+                ))
+            }
+            .toggleStyle(.checkbox)
+            LoginItemSetting(english: state.language == "en")
+            Button(state.tr("数据与模型设置…", "Data and model settings…")) { editingResearch = true }
+            HStack {
+                Button(state.tr("添加自定义组合…", "Add custom pair…")) {
+                    showingSettings = false
+                    adding = true
+                }
+                if state.groups.first(where: { $0.id == state.group })?.custom == true {
+                    Button(state.tr("删除当前组合", "Remove current pair")) {
+                        feed.send("remove", value: state.group)
                     }
                 }
+                Spacer(minLength: 0)
+                Button(state.tr("退出 Samuel", "Quit Samuel"), action: quit)
             }
-            Toggle(state.tr("菜单栏显示网速", "Show network rates"), isOn: Binding(
-                get: { state.showNet }, set: { feed.send("network", on: $0) }
-            ))
-            Toggle(state.tr("红涨绿跌", "Red for gains"), isOn: Binding(
-                get: { state.upIsRed }, set: { feed.send("color", on: $0) }
-            ))
-            Divider()
-            Button(state.tr("添加自定义组合…", "Add custom pair…")) { adding = true }
-            if state.groups.first(where: { $0.id == state.group })?.custom == true {
-                Button(state.tr("删除当前自定义组合", "Remove current custom pair")) {
-                    feed.send("remove", value: state.group)
-                }
-            }
-            Divider()
-            Button(state.tr("退出 Samuel", "Quit Samuel"), action: quit)
-        } label: {
-            Image(systemName: "gearshape")
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .accessibilityLabel(state.tr("设置", "Settings"))
+        .controlSize(.small)
+        .padding(10)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func quoteButton(_ quote: MarketQuote, _ state: Frame) -> some View {
@@ -185,7 +248,7 @@ struct Panel: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             if let chart = state.chart, chart.symbol == quote.id {
-                IntradayPlot(chart: chart, frame: state, tint: tint).id(chart.symbol)
+                IntradayPlot(chart: chart, frame: state, tint: tint).id(chart.window.start).id(chart.symbol)
                 detailSections(chart.detail, state)
             } else {
                 Text(state.tr("正在打开分时卡片…", "Opening chart…"))
@@ -250,7 +313,7 @@ struct Panel: View {
 
 private struct NewsRow: View {
     let article: Article
-    @State private var hover = false
+    @ViewState private var hover = false
 
     var body: some View {
         Group {
