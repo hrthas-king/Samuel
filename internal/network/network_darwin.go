@@ -3,11 +3,9 @@
 package network
 
 import (
-	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
-	"net/http"
 	"syscall"
 	"time"
 
@@ -82,31 +80,4 @@ func Ping(target string) monitor.Probe {
 	conn.Close()
 	p.Success, p.Uplink, p.RTT = true, monitor.UplinkConfirmed, p.At.Sub(start)
 	return p
-}
-
-func MeasureLatency(ctx context.Context) monitor.Latency {
-	target := "https://www.cloudflare.com/cdn-cgi/trace"
-	sample := monitor.Latency{Target: target, Method: "https"}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		sample.Error = err.Error()
-		return sample
-	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DisableKeepAlives = true
-	client := http.Client{Transport: transport}
-	start := time.Now()
-	response, err := client.Do(request)
-	sample.At = time.Now()
-	if err != nil {
-		sample.Error = err.Error()
-		return sample
-	}
-	response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		sample.Error = fmt.Sprintf("HTTP %d", response.StatusCode)
-		return sample
-	}
-	sample.RTT = sample.At.Sub(start)
-	return sample
 }
