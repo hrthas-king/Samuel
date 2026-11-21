@@ -22,19 +22,20 @@ func fetchIntraday(parent context.Context, q IntradayQuery) []IntradayPoint {
 	defer session.close()
 	const maxIntradayBody = 128 << 10
 	if q.tencentCode != "" {
-		path := "/appstock/app/minute/query?code=" + url.QueryEscape(q.tencentCode)
-		status, body, err := doHTTPRequestLimited(ctx, session, "web.ifzq.gtimg.cn", path, false, "GET", nil, maxIntradayBody)
-		if err != nil || status != 200 {
-			return nil
+		// During the 09:00–10:00 break the newest exchange date alone
+		// can no longer supply the preceding afternoon.
+		for _, endpoint := range []string{"day", "minute"} {
+			path := "/appstock/app/" + endpoint + "/query?code=" + url.QueryEscape(q.tencentCode)
+			status, body, err := doHTTPRequestLimited(ctx, session, "web.ifzq.gtimg.cn", path, false, "GET", nil, maxIntradayBody)
+			if err == nil && status == 200 {
+				if points, _ := parseTencentIntraday(q, body, time.Now()); len(points) > 0 {
+					return points
+				}
+			}
 		}
-		points, _ := parseTencentIntraday(q, body, time.Now())
-		return points
+		return nil
 	}
-	params := "range=1d&interval=5m"
-	if q.extended {
-		params = "range=1d&interval=2m&includePrePost=true"
-	}
-	path := "/v8/finance/chart/" + url.PathEscape(q.symbol) + "?" + params
+	path := yahooIntradayPath(q, time.Now())
 	for _, host := range []string{FallbackHost, PrimaryHost} {
 		if ctx.Err() != nil {
 			break

@@ -5,6 +5,8 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -56,34 +58,47 @@ type IntradayPoint struct {
 	Price float64
 }
 
-// IntradayQuery identifies one instrument and trading window. The quote's
-// poll time and changing price are deliberately absent from the cache key.
-type IntradayQuery struct {
-	symbol, tencentCode string
-	start, end          int64
-	extended            bool
+// IntradayWindow is the fixed, inclusive time axis shared by every instrument.
+type IntradayWindow struct {
+	Start int64 `json:"start"`
+	End   int64 `json:"end"`
 }
 
-func IntradayFor(q Quote) (IntradayQuery, bool) {
-	at := QuoteMarketTime(q)
-	if at.IsZero() || q.Symbol == "" {
+func BeijingTime(stamp int64) time.Time {
+	return time.Unix(stamp, 0).In(chinaMarketZone)
+}
+
+// Before 10:00, including the 09:00–10:00 break, keep the preceding window.
+func BeijingIntradayWindow(now time.Time) IntradayWindow {
+	at := now.In(chinaMarketZone)
+	start := time.Date(at.Year(), at.Month(), at.Day(), 10, 0, 0, 0, chinaMarketZone)
+	if at.Before(start) {
+		start = start.AddDate(0, 0, -1)
+	}
+	return IntradayWindow{start.Unix(), start.Add(23 * time.Hour).Unix()}
+}
+
+func (w IntradayWindow) Contains(stamp int64) bool {
+	return w.Start < w.End && stamp >= w.Start && stamp <= w.End
+}
+
+func (w IntradayWindow) Fraction(stamp int64) float64 {
+	return float64(stamp-w.Start) / float64(w.End-w.Start)
+}
+
+// All Yahoo sessions for a symbol share one cache entry. Only timestamped bars
+// actually supplied by the provider enter the chart.
+type IntradayQuery struct {
+	IntradayWindow
+	symbol, tencentCode string
+}
+
+func IntradayFor(q Quote, window IntradayWindow) (IntradayQuery, bool) {
+	if q.Symbol == "" || window.Start >= window.End {
 		return IntradayQuery{}, false
 	}
-	day := time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, at.Location())
-	query := IntradayQuery{symbol: q.Symbol, start: day.Unix(), end: day.AddDate(0, 0, 1).Unix()}
+	query := IntradayQuery{IntradayWindow: window, symbol: q.Symbol}
 	if strings.HasPrefix(q.UpdateMode, "yahoo_") {
-		switch q.UpdateMode {
-		case "yahoo_overnight":
-			// Yahoo's public v8 series covers pre, regular and post, not the
-			// separately sourced Blue Ocean overnight quote.
-			return IntradayQuery{}, false
-		case "yahoo_pre", "yahoo_post":
-			w := yahooUSWindow(at, q.MarketState, q.RegularTradeTime)
-			if w.mode != q.UpdateMode {
-				return IntradayQuery{}, false
-			}
-			query.start, query.end, query.extended = w.start.Unix(), w.end.Unix(), true
-		}
 		return query, true
 	}
 	if strings.HasPrefix(q.QuoteSource, "Tencent ") {
@@ -97,7 +112,14 @@ func IntradayFor(q Quote) (IntradayQuery, bool) {
 }
 
 func (q IntradayQuery) includes(stamp, now int64) bool {
-	return stamp >= q.start && stamp < q.end && stamp <= now
+	return q.Contains(stamp) && stamp <= now
+}
+
+func yahooIntradayPath(q IntradayQuery, now time.Time) string {
+	// Yahoo's period2 is exclusive. Include the 09:00 closing tick, but
+	// never request bars beyond the current clock.
+	return fmt.Sprintf("/v8/finance/chart/%s?period1=%d&period2=%d&interval=2m&includePrePost=true",
+		url.PathEscape(q.symbol), q.Start, min(q.End, now.Unix())+1)
 }
 
 func parseYahooIntraday(q IntradayQuery, body []byte, now time.Time) ([]IntradayPoint, error) {
@@ -140,32 +162,49 @@ func parseYahooIntraday(q IntradayQuery, body []byte, now time.Time) ([]Intraday
 }
 
 func parseTencentIntraday(q IntradayQuery, body []byte, now time.Time) ([]IntradayPoint, error) {
+	type minutes struct {
+		Date string   `json:"date"`
+		Rows []string `json:"data"`
+	}
 	var response struct {
 		Code int `json:"code"`
 		Data map[string]struct {
-			Minute struct {
-				Date string   `json:"date"`
-				Rows []string `json:"data"`
-			} `json:"data"`
+			Data json.RawMessage `json:"data"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
 	}
-	minute := response.Data[q.tencentCode].Minute
-	if response.Code != 0 || minute.Date != time.Unix(q.start, 0).In(chinaMarketZone).Format("20060102") {
+	raw := response.Data[q.tencentCode].Data
+	if response.Code != 0 || len(raw) == 0 {
 		return nil, nil
 	}
-	points := make([]IntradayPoint, 0, len(minute.Rows))
-	for _, row := range minute.Rows {
-		fields := strings.Fields(row)
-		if len(fields) < 2 || len(fields[0]) != 4 {
+	var days []minutes
+	if raw[0] == '{' { // The single-day fallback uses the same minute rows.
+		var day minutes
+		if err := json.Unmarshal(raw, &day); err != nil {
+			return nil, err
+		}
+		days = []minutes{day}
+	} else if err := json.Unmarshal(raw, &days); err != nil {
+		return nil, err
+	}
+	first, last := BeijingTime(q.Start).Format("20060102"), BeijingTime(q.End).Format("20060102")
+	var points []IntradayPoint
+	for _, day := range days {
+		if day.Date != first && day.Date != last {
 			continue
 		}
-		at, timeErr := time.ParseInLocation("200601021504", minute.Date+fields[0], chinaMarketZone)
-		price, priceErr := strconv.ParseFloat(fields[1], 64)
-		if timeErr == nil && priceErr == nil && q.includes(at.Unix(), now.Unix()) && positiveFinite(price) {
-			points = append(points, IntradayPoint{at.Unix(), price})
+		for _, row := range day.Rows {
+			fields := strings.Fields(row)
+			if len(fields) < 2 || len(fields[0]) != 4 {
+				continue
+			}
+			at, timeErr := time.ParseInLocation("200601021504", day.Date+fields[0], chinaMarketZone)
+			price, priceErr := strconv.ParseFloat(fields[1], 64)
+			if timeErr == nil && priceErr == nil && q.includes(at.Unix(), now.Unix()) && positiveFinite(price) {
+				points = append(points, IntradayPoint{at.Unix(), price})
+			}
 		}
 	}
 	return sortedIntraday(points), nil
@@ -182,50 +221,7 @@ func sortedIntraday(points []IntradayPoint) []IntradayPoint {
 		}
 		points[n-1] = p
 	}
-	if n < 2 {
-		return nil
-	}
 	return points[:n]
-}
-
-// IntradaySamples is a fallback for feeds without a verified public minute
-// endpoint. The caller keeps it only while a card is visible.
-type IntradaySamples struct {
-	symbol, source, mode string
-	state                SessionState
-	day                  int
-	points               []IntradayPoint
-}
-
-func (s *IntradaySamples) Add(view View, now time.Time) []IntradayPoint {
-	q := view.Quote
-	if q == nil || q.Reference || q.State == StateClosed || q.State == "" || q.QuoteSource == "" {
-		*s = IntradaySamples{}
-		return nil
-	}
-	at := QuoteMarketTime(*q)
-	if at.IsZero() || at.After(now) || !positiveFinite(q.Price) {
-		return nil
-	}
-	day := at
-	if q.State == StateOvernight && at.Hour() < 4 {
-		day = at.AddDate(0, 0, -1)
-	}
-	dayKey := day.Year()*1000 + day.YearDay()
-	if q.Symbol != s.symbol || q.QuoteSource != s.source || q.UpdateMode != s.mode || q.State != s.state || dayKey != s.day {
-		s.symbol, s.source, s.mode, s.state, s.day = q.Symbol, q.QuoteSource, q.UpdateMode, q.State, dayKey
-		s.points = s.points[:0]
-	}
-	n := len(s.points)
-	if view.Healthy && (n == 0 || q.TradeTime > s.points[n-1].Time) {
-		const limit = 256
-		if n == limit {
-			copy(s.points, s.points[1:])
-			s.points = s.points[:n-1]
-		}
-		s.points = append(s.points, IntradayPoint{q.TradeTime, q.Price})
-	}
-	return s.points
 }
 
 const intradayTTL = 45 * time.Second
@@ -299,11 +295,4 @@ func (c *IntradayClient) Request(q IntradayQuery) ([]IntradayPoint, bool) {
 		}
 	}()
 	return nil, true
-}
-
-func (c *IntradayClient) Result(q IntradayQuery) ([]IntradayPoint, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	entry, ok := c.entries[q]
-	return entry.points, ok && entry.expires.IsZero()
 }

@@ -12,19 +12,19 @@ import (
 func TestYahooIntradayFiltersPointsAndRetainsTradingDay(t *testing.T) {
 	now := time.Date(2026, 11, 5, 16, 0, 0, 0, newYorkZone)
 	q := Quote{Symbol: "VOO", Currency: "USD", UpdateMode: "yahoo_regular", TradeTime: now.Unix()}
-	query, ok := IntradayFor(q)
+	query, ok := IntradayFor(q, BeijingIntradayWindow(now))
 	if !ok {
 		t.Fatal("Yahoo regular quote did not resolve")
 	}
 	first, last := now.Add(-3*time.Hour).Unix(), now.Add(-time.Minute).Unix()
 	body := fmt.Appendf(nil, `{"chart":{"result":[{"meta":{"symbol":"VOO"},"timestamp":[%d,%d,%d,%d,%d,%d,%d,%d,%d,null,%d],"indicators":{"quote":[{"close":[649,655,null,"NaN","Infinity",1e999,800,410,647,999,0]}]}}]}}`,
-		last, first, last-600, last-601, last-602, last-603, now.Unix()+60, query.start-60, last, first+10)
+		last, first, last-600, last-601, last-602, last-603, now.Unix()+60, query.Start-60, last, first+10)
 	want := []IntradayPoint{{first, 655}, {last, 647}}
 	points, err := parseYahooIntraday(query, body, now)
 	if err != nil || !slices.Equal(points, want) {
 		t.Fatalf("points=%+v err=%v", points, err)
 	}
-	if points, _ := parseYahooIntraday(IntradayQuery{symbol: "QQQ", start: query.start, end: query.end}, body, now); len(points) != 0 {
+	if points, _ := parseYahooIntraday(IntradayQuery{symbol: "QQQ", IntradayWindow: query.IntradayWindow}, body, now); len(points) != 0 {
 		t.Fatal("accepted a different instrument")
 	}
 	if points, _ := parseYahooIntraday(query, []byte(`{"chart":{"result":[{"meta":{"symbol":"VOO"},"timestamp":[null,1],"indicators":{"quote":[{"close":[]}]}}]}}`), now); len(points) != 0 {
@@ -37,75 +37,88 @@ func TestIntradayQuoteSessionAndProviderRouting(t *testing.T) {
 	after := time.Date(2026, 11, 27, 13, 12, 0, 0, newYorkZone)
 	q := Quote{Symbol: "QQQ", Currency: "USD", QuoteType: "ETF", UpdateMode: "yahoo_post", MarketState: "POST",
 		TradeTime: after.Unix(), RegularTradeTime: after.Add(-12 * time.Minute).Unix()}
-	query, ok := IntradayFor(q)
-	if !ok || !query.extended || query.start != q.RegularTradeTime || query.end != after.Add(3*time.Hour+48*time.Minute).Unix() {
-		t.Fatalf("early-close after-hours window = %+v, ok=%v", query, ok)
+	window := BeijingIntradayWindow(after)
+	query, ok := IntradayFor(q, window)
+	if !ok || query.IntradayWindow != window {
+		t.Fatalf("after-hours window = %+v, ok=%v", query, ok)
 	}
 	body := fmt.Appendf(nil, `{"chart":{"result":[{"meta":{"symbol":"QQQ"},"timestamp":[%d,%d,%d],"indicators":{"quote":[{"close":[700,695,694]}]}}]}}`,
-		query.start-60, query.start+60, after.Unix())
+		window.Start-60, q.RegularTradeTime-60, after.Unix())
 	if points, err := parseYahooIntraday(query, body, after); err != nil || len(points) != 2 || points[0].Price != 695 {
-		t.Fatalf("regular points leaked into the post-market chart: %v %v", points, err)
+		t.Fatalf("regular and post-market bars should be on one axis: %v %v", points, err)
 	}
-	for _, mode := range []string{"yahoo_overnight", "cnbc_realtime", "commodity_realtime"} {
+	for _, mode := range []string{"yahoo_regular", "yahoo_pre", "yahoo_overnight"} {
 		q.UpdateMode = mode
-		if _, ok := IntradayFor(q); ok {
-			t.Fatalf("%s must degrade to the verified quote", mode)
+		if other, ok := IntradayFor(q, window); !ok || other != query {
+			t.Fatalf("%s changed the full-window cache key: %+v", mode, other)
+		}
+	}
+	for _, mode := range []string{"cnbc_realtime", "commodity_realtime"} {
+		q.UpdateMode = mode
+		if _, ok := IntradayFor(q, window); ok {
+			t.Fatalf("%s must use verified quote samples", mode)
 		}
 	}
 	q = Quote{Symbol: "^HSI", Currency: "HKD", QuoteSource: "Tencent Real Time", TradeTime: after.Unix()}
-	if query, ok := IntradayFor(q); !ok || query.tencentCode != "hkHSI" {
+	if query, ok := IntradayFor(q, window); !ok || query.tencentCode != "hkHSI" {
 		t.Fatalf("incorrect Hong Kong minute code: %+v", query)
 	}
 }
 
 func TestTencentIntradayMinuteRows(t *testing.T) {
-	now := time.Date(2026, 11, 6, 9, 35, 0, 0, chinaMarketZone)
+	now := time.Date(2026, 11, 6, 10, 35, 0, 0, chinaMarketZone)
 	q := Quote{Symbol: "159632.SZ", Currency: "CNY", QuoteSource: "Tencent Finance", TradeTime: now.Unix()}
-	query, ok := IntradayFor(q)
+	query, ok := IntradayFor(q, BeijingIntradayWindow(now))
 	if !ok {
 		t.Fatal("Tencent ETF not routed")
 	}
-	body := []byte(`{"code":0,"data":{"sz159632":{"data":{"date":"20261106","data":["0933 2.424 50","0931 2.422 5","0933 2.425 60","0934 NaN","0934 +Inf","0934 0","2561 3","0936 4","202611050932 20",null,"0932"]}}}}`)
+	body := []byte(`{"code":0,"data":{"sz159632":{"data":{"date":"20261106","data":["1033 2.424 50","1031 2.422 5","1033 2.425 60","1034 NaN","1034 +Inf","1034 0","2561 3","1036 4","202611051032 20",null,"1032"]}}}}`)
 	want := []IntradayPoint{{now.Add(-4 * time.Minute).Unix(), 2.422}, {now.Add(-2 * time.Minute).Unix(), 2.425}}
 	points, err := parseTencentIntraday(query, body, now)
 	if err != nil || !slices.Equal(points, want) {
 		t.Fatalf("points=%+v err=%v", points, err)
 	}
-	query.start -= 86400
+	query.IntradayWindow = BeijingIntradayWindow(now.AddDate(0, 0, -1))
 	if points, _ := parseTencentIntraday(query, body, now); len(points) != 0 {
 		t.Fatal("accepted a mismatched exchange date")
 	}
 }
 
-func TestIntradaySamplesUseNewVerifiedTicks(t *testing.T) {
-	now := time.Date(2026, 11, 6, 10, 0, 0, 0, eastAsiaZone)
-	q := Quote{Symbol: "^N225", Price: 63000, QuoteSource: "Tencent Finance", UpdateMode: "global_index_quote", State: StateRegular}
-	view := View{Quote: &q, Healthy: true}
-	var samples IntradaySamples
-	if got := samples.Add(view, now); len(got) != 0 {
-		t.Fatal("a poll time must not create a chart point")
+func TestIntradaySamplesAcrossMidnightBreakAndRollover(t *testing.T) {
+	start := time.Date(2026, 12, 31, 10, 0, 0, 0, chinaMarketZone)
+	q := Quote{Symbol: "^N225", Price: 63000, QuoteSource: "Tencent Finance", State: StateRegular}
+	view := View{Symbol: q.Symbol, Quote: &q, Healthy: true}
+	var history IntradayHistory
+	read := func(now time.Time, count int) IntradaySeries {
+		t.Helper()
+		series := history.Read(view, now, nil)
+		if len(series.Points) != count || series.Sampled != (count > 0) {
+			t.Fatalf("at %s got %+v, want %d verified samples", now, series, count)
+		}
+		return series
 	}
-	q.TradeTime = now.Unix()
-	if got := samples.Add(view, now); len(got) != 1 {
-		t.Fatalf("first quote: %v", got)
-	}
+	read(start, 0)
+	q.TradeTime = start.Unix()
+	read(start, 1)
 	q.Price++
-	if got := samples.Add(view, now); len(got) != 1 || got[0].Price != 63000 {
-		t.Fatalf("duplicate source timestamp: %v", got)
+	if read(start.Add(time.Second), 1).Points[0].Price != 63000 {
+		t.Fatal("a poll with the same timestamp replaced a verified tick")
 	}
 	q.TradeTime++
-	if got := samples.Add(view, now.Add(time.Second)); len(got) != 2 || got[1].Price != 63001 {
-		t.Fatalf("a new verified quote did not extend the chart: %v", got)
+	read(start.Add(time.Second), 2)
+	midnight := start.Add(14 * time.Hour)
+	q.TradeTime, q.State = midnight.Unix(), StatePostMarket
+	if got := read(midnight, 3); !slices.Equal(got.Breaks, []int{2}) {
+		t.Fatalf("gap across a session change: %+v", got)
 	}
-	next := now.AddDate(0, 0, 1)
-	q.TradeTime = next.Unix()
-	if got := samples.Add(view, next); len(got) != 1 || got[0].Time != next.Unix() {
-		t.Fatalf("samples mixed trading days: %v", got)
-	}
+	end := start.Add(23 * time.Hour)
+	q.TradeTime = end.Unix()
+	read(end, 4)
+	q.TradeTime++
+	read(end.Add(time.Minute), 4)
 	q.State = StateClosed
-	if got := samples.Add(view, next); len(got) != 0 {
-		t.Fatalf("closed instrument retained a misleading chart: %v", got)
-	}
+	read(end.Add(59*time.Minute), 4)
+	read(start.AddDate(0, 0, 1), 0) // stale quote at the next 10:00
 }
 
 func TestIntradayCacheIsLazyDeduplicatedAndScoped(t *testing.T) {
@@ -127,7 +140,7 @@ func TestIntradayCacheIsLazyDeduplicatedAndScoped(t *testing.T) {
 	if calls.Load() != 0 || client.entries != nil {
 		t.Fatal("inactive chart allocated a cache or started a request")
 	}
-	q := IntradayQuery{symbol: "VOO", start: 1, end: 10}
+	q := IntradayQuery{symbol: "VOO", IntradayWindow: IntradayWindow{1, 10}}
 	for range 20 {
 		if data, loading := client.Request(q); !loading || data != nil {
 			t.Fatal("same request did not join the flight")
@@ -146,7 +159,7 @@ func TestIntradayCacheIsLazyDeduplicatedAndScoped(t *testing.T) {
 	if data, loading := client.Request(q); loading || !slices.Equal(data, want) || calls.Load() != 1 {
 		t.Fatalf("cached request: data=%v loading=%v calls=%d", data, loading, calls.Load())
 	}
-	newSession := IntradayQuery{symbol: q.symbol, start: 10, end: 20}
+	newSession := IntradayQuery{symbol: q.symbol, IntradayWindow: IntradayWindow{10, 20}}
 	if _, loading := client.Request(newSession); !loading {
 		t.Fatal("a new session must not reuse old points")
 	}
