@@ -29,6 +29,7 @@ const (
 var (
 	clientMu    sync.Mutex
 	sessHandle  *httpSession
+	yahooAuth   *httpSession
 	cachedCrumb string
 	yahooQuotes yahooQuoteRecovery
 	cachedCNY   fxQuote
@@ -36,22 +37,22 @@ var (
 	fxNextTry   time.Time
 )
 
-func ensureSessionLocked() (*httpSession, error) {
-	if sessHandle != nil {
-		return sessHandle, nil
+func ensureSessionLocked(slot **httpSession) (*httpSession, error) {
+	if *slot != nil {
+		return *slot, nil
 	}
 	session, err := newHTTPSession()
 	if err != nil {
 		return nil, err
 	}
-	sessHandle = session
+	*slot = session
 	return session, nil
 }
 
-func resetSessionLocked() {
-	if sessHandle != nil {
-		sessHandle.close()
-		sessHandle = nil
+func resetYahooAuthLocked() {
+	if yahooAuth != nil {
+		yahooAuth.close()
+		yahooAuth = nil
 	}
 	cachedCrumb = ""
 }
@@ -65,7 +66,10 @@ func refreshCrumbLocked(ctx context.Context, session *httpSession) (string, erro
 }
 
 func requestCrumb(ctx context.Context, session *httpSession) (string, error) {
-	_, _, lastErr := doHTTPGet(ctx, session, CookieHost, "/", true)
+	status, _, lastErr := doHTTPGet(ctx, session, CookieHost, "/", true)
+	if status == 429 {
+		return "", HTTPError{StatusCode: status}
+	}
 	for _, host := range []string{PrimaryHost, FallbackHost} {
 		if err := ctx.Err(); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) && lastErr != nil {
@@ -74,6 +78,9 @@ func requestCrumb(ctx context.Context, session *httpSession) (string, error) {
 			return "", err
 		}
 		status, body, err := doHTTPGet(ctx, session, host, "/v1/test/getcrumb", true)
+		if status == 429 {
+			return "", HTTPError{StatusCode: status}
+		}
 		if err != nil {
 			lastErr = err
 			continue
@@ -153,7 +160,7 @@ func enrichCapitalizationLocked(ctx context.Context, batch map[string]SymbolResu
 	now := time.Now()
 	if now.Sub(fxFetchedAt) >= time.Minute && !now.Before(fxNextTry) {
 		fxNextTry = now.Add(15 * time.Second)
-		if session, err := ensureSessionLocked(); err == nil {
+		if session, err := ensureSessionLocked(&sessHandle); err == nil {
 			fxCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			for _, host := range []string{PrimaryHost, FallbackHost} {
 				status, body, err := doHTTPGet(fxCtx, session, host, "/v8/finance/chart/CNY%3DX?interval=1d&range=1d", false)
@@ -179,7 +186,7 @@ func fetchSymbolsLocked(ctx context.Context, syms []string) (map[string]SymbolRe
 }
 
 func fetchTencentSymbolsLocked(ctx context.Context, syms []string) (map[string]SymbolResult, error) {
-	session, err := ensureSessionLocked()
+	session, err := ensureSessionLocked(&sessHandle)
 	if err != nil {
 		return nil, err
 	}
@@ -191,28 +198,14 @@ func fetchTencentSymbolsLocked(ctx context.Context, syms []string) (map[string]S
 }
 
 func fetchYahooSymbolsLocked(ctx context.Context, syms []string) (map[string]SymbolResult, error) {
-	return yahooQuotes.fetch(ctx, func(ctx context.Context) (map[string]SymbolResult, error) {
-		session, err := ensureSessionLocked()
+	return yahooQuotes.fetch(ctx, syms, fetchV7OvernightLocked, func(ctx context.Context, missing []string) (map[string]SymbolResult, error) {
+		session, err := ensureSessionLocked(&sessHandle)
 		if err != nil {
 			return nil, err
 		}
-		batch, err := fetchV7OvernightLocked(ctx, session, syms)
-		if err != nil {
-			resetSessionLocked()
-		}
-		return batch, err
-	}, func(ctx context.Context) (map[string]SymbolResult, error) {
-		session, err := ensureSessionLocked()
-		if err != nil {
-			return nil, err
-		}
-		batch, err := fetchChartBatch(ctx, syms, func(ctx context.Context, symbol string) (Quote, error) {
+		return fetchChartBatch(ctx, missing, func(ctx context.Context, symbol string) (Quote, error) {
 			return fetchChartSymbol(ctx, session, symbol)
 		})
-		if err != nil {
-			resetSessionLocked()
-		}
-		return batch, err
 	})
 }
 
@@ -230,35 +223,28 @@ func fetchTencentRealtimeLocked(ctx context.Context, session *httpSession, syms 
 	return ParseTencentQuoteBatch(syms, body, rttMs, time.Now())
 }
 
-func fetchV7OvernightLocked(ctx context.Context, session *httpSession, syms []string) (map[string]SymbolResult, error) {
+func fetchV7OvernightLocked(ctx context.Context, syms []string) (map[string]SymbolResult, error) {
+	session, err := ensureSessionLocked(&yahooAuth)
+	if err != nil {
+		return nil, err
+	}
 	crumb := cachedCrumb
 	if crumb == "" {
-		var err error
 		crumb, err = refreshCrumbLocked(ctx, session)
 		if err != nil {
-			return nil, err
+			resetYahooAuthLocked()
+			return nil, fmt.Errorf("Yahoo v7 crumb: %w", err)
 		}
 	}
 
 	batch, err := tryV7Batch(ctx, session, syms, crumb)
-	if err == nil {
-		return batch, nil
-	}
-
 	var httpErr HTTPError
 	if errors.As(err, &httpErr) && (httpErr.StatusCode == 401 || httpErr.StatusCode == 403) {
-		resetSessionLocked()
-		newSession, sErr := ensureSessionLocked()
-		if sErr != nil {
-			return nil, sErr
-		}
-		newCrumb, cErr := refreshCrumbLocked(ctx, newSession)
-		if cErr != nil {
-			return nil, cErr
-		}
-		return tryV7Batch(ctx, newSession, syms, newCrumb)
+		// Let the public chart supply the current poll. Re-authenticate
+		// once the controller's cooldown expires.
+		resetYahooAuthLocked()
 	}
-	return nil, err
+	return batch, err
 }
 
 func wireSymbolList(syms []string) string {
@@ -284,6 +270,9 @@ func tryV7Batch(ctx context.Context, session *httpSession, syms []string, crumb 
 		}
 		start := time.Now()
 		status, body, err := doHTTPGet(ctx, session, host, path, true)
+		if status == 429 {
+			return nil, HTTPError{StatusCode: status}
+		}
 		if err != nil {
 			lastErr = err
 			continue
@@ -321,9 +310,9 @@ func fetchChartSymbol(ctx context.Context, session *httpSession, sym string) (Qu
 				return Quote{}, err
 			}
 			start := time.Now()
-			status, body, err := doHTTPGet(ctx, session, host, path, false)
-			if err == nil && status != 200 {
-				err = HTTPError{StatusCode: status}
+			body, err := getYahooChart(ctx, session, host, path, MaxBody)
+			if yahooRateLimited(err) {
+				return Quote{}, err
 			}
 			if err == nil {
 				rttMs := float64(time.Since(start).Microseconds()) / 1000.0
@@ -337,6 +326,22 @@ func fetchChartSymbol(ctx context.Context, session *httpSession, sym string) (Qu
 		}
 	}
 	return Quote{}, lastErr
+}
+
+func getYahooChart(ctx context.Context, session *httpSession, host, path string, maxBytes int) ([]byte, error) {
+	attempt, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	status, body, err := doHTTPRequestLimited(attempt, session, host, path, false, "GET", nil, maxBytes)
+	if status == 429 {
+		return nil, HTTPError{StatusCode: status}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 {
+		return nil, HTTPError{StatusCode: status}
+	}
+	return body, nil
 }
 
 func doHTTPGet(ctx context.Context, session *httpSession, host, path string, enableCookies bool) (int, []byte, error) {

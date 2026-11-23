@@ -17,7 +17,9 @@ Samuel 原名 PulseBar，将网络感知与双标的行情显示组合在一条�
 
 ## macOS 下载安装
 
-1. 从 [macOS 发布页](https://github.com/hrthas-king/Samuel/releases?q=macos-v) 下载所选版本的 `Samuel-<版本>-macos-universal.zip`。同一个包适用于 **macOS 13 及以上**的 Apple Silicon 和 Intel Mac。
+查看 [macOS 使用说明](macos/README.md)，里面有安装、升级、行情状态和排查步骤。
+
+1. 从 [macOS 1.3.2 发布页](https://github.com/hrthas-king/Samuel/releases/tag/macos-v1.3.2) 下载 `Samuel-1.3.2-macos-universal.zip`。同一个包适用于 **macOS 13 及以上**的 Apple Silicon 和 Intel Mac。
 2. 解压后将 `Samuel.app` 拖入 **应用程序** 并打开。点击屏幕顶部的 Samuel 行情项进入详情，点击另一只标的即可切换。
 3. 在图上悬停查看该点的时间、价格与涨跌幅，单击固定。图下显示上次常规盘收盘涨跌幅；向下滚动可看盘口、宏观事件和资讯。右上角齿轮可调整语言、刷新间隔、网速、涨跌配色和自定义组合。勾选 **登录时启动** 后，Samuel 会随 macOS 登录打开。
 
@@ -25,7 +27,7 @@ macOS 使用原生菜单栏和系统弹窗，复用 Windows 版的行情、分�
 
 从源码构建需要 macOS、Xcode 命令行工具和 Go 1.24+。运行 `bash scripts/build-macos.sh`，通用压缩包输出到 `dist/`。
 
-## macOS 1.3.1 美股宏观情绪与择时
+## macOS 美股宏观情绪与择时
 
 点击 Samuel 菜单栏面板顶部的 **宏观**，选择策略，再点 **运行今日研判**。面板显示 0–100 的风险温度、定投倍率、SPX／NDX 偏好、指标覆盖率和四个维度的解释。**回填与胜率** 可查看历史信号到期后的表现。两个操作都由独立的 macOS 行情助手按需执行。
 

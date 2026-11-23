@@ -18,7 +18,33 @@ for size in 16 32 128 256 512; do
   sips -z "$size" "$size" assets/icon.png --out "$work/Samuel.iconset/icon_${size}x${size}.png" >/dev/null
   sips -z "$((2*size))" "$((2*size))" assets/icon.png --out "$work/Samuel.iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
-iconutil -c icns "$work/Samuel.iconset" -o "$bundle/Contents/Resources/Samuel.icns"
+icon="$bundle/Contents/Resources/Samuel.icns"
+if ! iconutil -c icns "$work/Samuel.iconset" -o "$icon"; then
+  # Keep the same PNG representations when iconutil cannot create the container.
+  python3 - "$work/Samuel.iconset" "$icon" <<'SAMUEL_ICNS'
+from pathlib import Path
+import struct
+import sys
+
+iconset, output = map(Path, sys.argv[1:])
+representations = (
+    (b"icp4", "16x16", 16), (b"ic11", "16x16@2x", 32),
+    (b"icp5", "32x32", 32), (b"ic12", "32x32@2x", 64),
+    (b"ic07", "128x128", 128), (b"ic13", "128x128@2x", 256),
+    (b"ic08", "256x256", 256), (b"ic14", "256x256@2x", 512),
+    (b"ic09", "512x512", 512), (b"ic10", "512x512@2x", 1024),
+)
+elements = []
+for kind, name, side in representations:
+    png = (iconset / f"icon_{name}.png").read_bytes()
+    png_header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+    if not png.startswith(png_header) or len(png) < 24 or struct.unpack_from(">II", png, 16) != (side, side):
+        raise SystemExit(f"Invalid icon representation: {name}")
+    elements.append(struct.pack(">4sI", kind, len(png) + 8) + png)
+body = b"".join(elements)
+output.write_bytes(struct.pack(">4sI", b"icns", len(body) + 8) + body)
+SAMUEL_ICNS
+fi
 cp LICENSE "$bundle/Contents/Resources/LICENSE.txt"
 
 sdk="$(xcrun --sdk macosx --show-sdk-path)"

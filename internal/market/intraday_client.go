@@ -13,7 +13,7 @@ func NewIntradayClient(ctx context.Context, notify func()) *IntradayClient {
 }
 
 func fetchIntraday(parent context.Context, q IntradayQuery) []IntradayPoint {
-	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 	session, err := newHTTPSession()
 	if err != nil {
@@ -40,8 +40,11 @@ func fetchIntraday(parent context.Context, q IntradayQuery) []IntradayPoint {
 		if ctx.Err() != nil {
 			break
 		}
-		status, body, err := doHTTPRequestLimited(ctx, session, host, path, false, "GET", nil, maxIntradayBody)
-		if err == nil && status == 200 {
+		body, err := getYahooChart(ctx, session, host, path, maxIntradayBody)
+		if yahooRateLimited(err) {
+			break
+		}
+		if err == nil {
 			if points, err := parseYahooIntraday(q, body, time.Now()); err == nil {
 				return points
 			}

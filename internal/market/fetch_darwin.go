@@ -5,11 +5,13 @@ package market
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -29,7 +31,9 @@ func newHTTPSession() (*httpSession, error) {
 	session := &httpSession{transport: transport}
 	session.withCookies = http.Client{Transport: transport, Jar: jar, CheckRedirect: httpsOnly}
 	session.plain = http.Client{Transport: transport, CheckRedirect: httpsOnly}
-	_ = session.setTimeouts(800, TimeoutMillis, TimeoutMillis, TimeoutMillis)
+	// The caller sets a total deadline. Allow time for TLS and headers
+	// on slower Wi-Fi, VPN and proxy routes within that deadline.
+	_ = session.setTimeouts(1000, 3500, 2000, 4000)
 	return session, nil
 }
 
@@ -72,7 +76,13 @@ func doHTTPRequestLimited(ctx context.Context, session *httpSession, host, path 
 	}
 	response, err := client.Do(req)
 	if err != nil {
-		return 0, nil, err
+		// url.Error includes the request's raw URL, which may contain a
+		// provider session credential. Keep only the host and cause.
+		var requestErr *url.Error
+		if errors.As(err, &requestErr) {
+			err = requestErr.Err
+		}
+		return 0, nil, fmt.Errorf("%s: %w", host, err)
 	}
 	defer response.Body.Close()
 	if encoding := strings.TrimSpace(response.Header.Get("Content-Encoding")); encoding != "" && !strings.EqualFold(encoding, "identity") {

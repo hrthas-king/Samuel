@@ -31,10 +31,10 @@ func TestLiveYahooUSSessions(t *testing.T) {
 	}
 	clientMu.Lock()
 	defer clientMu.Unlock()
-	defer resetSessionLocked()
+	defer resetYahooAuthLocked()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	session, err := ensureSessionLocked()
+	session, err := ensureSessionLocked(&yahooAuth)
 	if err != nil {
 		t.Fatal(err)
 	}

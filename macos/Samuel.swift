@@ -76,7 +76,9 @@ final class SamuelDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             append("  │  ", .secondaryLabelColor)
             let name = quote.ticker.hasPrefix("SSE:") || quote.ticker.hasPrefix("SZSE:") ? quote.name : quote.ticker
             append(name + " ")
-            if let move = quote.percent, abs(move) >= 0.005 {
+            if !quote.healthy, quote.percent != nil {
+                append(percentText(quote.percent) + " !", .secondaryLabelColor)
+            } else if let move = quote.percent, abs(move) >= 0.005 {
                 append(percentText(move), (move > 0) == state.upIsRed ? .systemRed : .systemGreen)
             } else {
                 append(percentText(quote.percent), .secondaryLabelColor)
@@ -84,7 +86,11 @@ final class SamuelDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         if state.quotes.isEmpty { append("  " + state.tr("等待排名", "Ranking…"), .secondaryLabelColor) }
         button.attributedTitle = title
-        button.toolTip = "Samuel · " + state.tr("点击打开分时详情", "Click for intraday details")
+        let unavailable = state.quotes.contains { !$0.healthy }
+        let hint = unavailable
+            ? state.tr("部分行情待更新，点击查看详情", "Some quotes await an update. Click for details.")
+            : state.tr("点击打开分时详情", "Click for intraday details")
+        button.toolTip = "Samuel · " + hint
         button.setAccessibilityValue(title.string)
     }
 }

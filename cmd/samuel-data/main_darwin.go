@@ -24,7 +24,7 @@ import (
 	"github.com/hrthas-king/Samuel/internal/watchlist"
 )
 
-var version = "1.3.1"
+var version = "1.3.2"
 
 type command struct {
 	Action string `json:"action"`
